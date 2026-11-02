@@ -1,8 +1,8 @@
 /**
  * LILY POND & CARNIVAL TRAVEL HUB - APP.JS
- * Complete Logic with Image 2 Palette, Hidden Nav on Home,
- * Fixed Hotel Base Loading, Merged Docs Upload in Packing,
- * Spots Map + Gallery Detail View, & Timeline Itinerary.
+ * Complete Logic with City Filtering Fix, Firebase Storage Integration,
+ * Quick-Deck Emergency Support, Post-Travel Infographic Stats,
+ * and Optimized Launch Speed.
  */
 
 const firebaseConfig = {
@@ -18,6 +18,8 @@ const firebaseConfig = {
 // Initialize Firebase & Firestore
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const storage = firebase.storage();
+
 try { if (db.enablePersistence) db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}   // keep data + edits when offline
 
 let appData = {
@@ -72,7 +74,7 @@ function fmtMoney(n, code) {
   const d = ['IDR', 'JPY', 'KRW'].includes(code) ? 0 : 2;
   return (CURRENCIES[code] || code) + ' ' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
-// Value of an expense in the trip's main currency (null = needs an exchange rate)
+
 function expToTrip(trip, e) {
   const amt = parseFloat(e.amount) || 0, cur = e.currency || tripCur(trip), tc = tripCur(trip);
   if (cur === tc) return amt;
@@ -92,7 +94,19 @@ const SPOT_EMOJI = { Attraction: '🏛️', Coffee: '☕', Food: '🍜', 'Shoppi
 const WALK_M_PER_MIN = 80;
 const PLACEHOLDER_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4E888A"/><stop offset="1" stop-color="#113665"/></linearGradient></defs><rect width="600" height="400" fill="url(#g)"/></svg>');
 
-// Downscale photos so they fit in Firestore (1 MB per document)
+// Firebase Storage Upload Helper Function
+async function uploadImageToFirebase(file, folder = "user_uploads") {
+  try {
+    const filename = `${folder}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+    const ref = storage.ref().child(filename);
+    const snap = await ref.put(file);
+    return await snap.ref.getDownloadURL();
+  } catch (err) {
+    console.error("Firebase Storage Upload Error:", err);
+    return null;
+  }
+}
+
 function scaleImage(file, maxDim, cb) {
   const r = new FileReader();
   r.onload = e => {
@@ -109,12 +123,13 @@ function scaleImage(file, maxDim, cb) {
   };
   r.readAsDataURL(file);
 }
+
 function walkMins(lat1, lng1, lat2, lng2) { return Math.round(calculateDistanceInKm(lat1, lng1, lat2, lng2) * 1000 / WALK_M_PER_MIN); }
 function getHotelObj(trip) {
   const list = (typeof hotelDatabase !== 'undefined' && hotelDatabase[getActiveHotelCity(trip)]) || [];
   return list.find(h => h.name === trip.activeHotel) || null;
 }
-// Stations within maxMins walk of a point, nearest first
+
 function stationsNear(lat, lng, city, maxMins = 30) {
   return (stationDatabase[city] || []).map(s => ({ ...s, mins: walkMins(lat, lng, s.lat, s.lng) }))
     .filter(s => s.mins <= maxMins).sort((a, b) => a.mins - b.mins);
@@ -125,7 +140,7 @@ function stationLabel(lat, lng, city) {
 }
 function openImageViewer(src) { document.getElementById('image-viewer-img').src = src; openModal('modal-image'); }
 
-// --- TODAY + WEATHER (Open-Meteo, free, no account) ---
+// Open-Meteo Weather Integration
 const WX = { 0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️', 45: '🌫️', 48: '🌫️', 51: '🌦️', 53: '🌦️', 55: '🌦️', 56: '🌧️', 57: '🌧️', 61: '🌧️', 63: '🌧️', 65: '🌧️', 66: '🌧️', 67: '🌧️', 71: '🌨️', 73: '🌨️', 75: '🌨️', 77: '🌨️', 80: '🌦️', 81: '🌧️', 82: '⛈️', 85: '🌨️', 86: '🌨️', 95: '⛈️', 96: '⛈️', 99: '⛈️' };
 const wxIcon = c => WX[c] || '🌡️';
 let _wx = {};
@@ -154,7 +169,7 @@ async function loadWeather(trip) {
       j.daily.time.forEach((t, i) => { days[t] = { code: j.daily.weathercode[i], max: Math.round(j.daily.temperature_2m_max[i]), min: Math.round(j.daily.temperature_2m_min[i]), pop: j.daily.precipitation_probability_max[i] }; });
       _wx[trip.id] = { fetched: Date.now(), pt: ptKey, days };
       try { localStorage.setItem(key, JSON.stringify(_wx[trip.id])); } catch (e) {}
-    } catch (e) { /* offline or blocked: keep the saved forecast */ }
+    } catch (e) {}
   }
   renderTodayCard();
   if (!document.getElementById('page-itinerary')?.classList.contains('hidden')) renderItinerary();
@@ -192,7 +207,7 @@ function renderTodayCard() {
   }
 }
 
-// --- INSTALL + OFFLINE ---
+// INSTALL + OFFLINE LOGIC
 let _installEvt = null;
 const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); _installEvt = e; showInstallCard(); });
@@ -215,7 +230,7 @@ function updateOnlinePill() { document.getElementById('offline-pill')?.classList
 window.addEventListener('online', updateOnlinePill);
 window.addEventListener('offline', updateOnlinePill);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
-// Show the last saved copy straight away (also when there is no signal)
+
 function loadCachedAppData() {
   try {
     const saved = localStorage.getItem('lily_pond_image2_data');
@@ -225,7 +240,7 @@ function loadCachedAppData() {
   } catch (e) { console.warn('No saved copy yet', e); }
 }
 
-// --- INITIALIZATION ---
+// INITIALIZATION
 window.onload = function() {
   initHotelDatabase();
   showInstallCard(); updateOnlinePill(); loadCachedAppData();
@@ -248,44 +263,81 @@ function initHotelDatabase() {
   }
 }
 
+const _photoCache = {}, _photoLoading = {};
+function savePhotoDoc(id, data) {
+  _photoCache[id] = data;
+  db.collection("travelHub").doc("photo_" + id).set({ data }).catch(() => alert("Couldn't share that photo offline."));
+}
+function deletePhotoDoc(ref) { delete _photoCache[ref]; db.collection("travelHub").doc("photo_" + ref).delete().catch(() => {}); }
+function fetchPhotoNow(ref) {
+  if (_photoCache[ref]) return Promise.resolve(_photoCache[ref]);
+  try {
+    return db.collection("travelHub").doc("photo_" + ref).get()
+      .then(d => { if (d.exists) { _photoCache[ref] = d.data().data; return _photoCache[ref]; } return null; }).catch(() => null);
+  } catch (e) { return Promise.resolve(null); }
+}
+function docPhoto(i) {
+  if (!i) return null;
+  if (i.fileData) return i.fileData;
+  if (!i.photoRef) return null;
+  if (_photoCache[i.photoRef]) return _photoCache[i.photoRef];
+  if (!_photoLoading[i.photoRef]) {
+    _photoLoading[i.photoRef] = true;
+    fetchPhotoNow(i.photoRef).then(d => { delete _photoLoading[i.photoRef]; if (d) { try { renderCategorizedPackingList(); renderSummaryPage(); renderItinerary(); } catch (e) {} } });
+  }
+  return null;
+}
+
 function checklistStorageKey(tripId) { return `lily_pond_device_checklists_${tripId}`; }
 function saveDeviceChecklists() {
-  try { appData.trips.forEach(t => localStorage.setItem(checklistStorageKey(t.id), JSON.stringify(t.checklists || { packing: [] }))); } catch (e) { console.warn('Device checklist storage unavailable', e); }
+  try { appData.trips.forEach(t => localStorage.setItem(checklistStorageKey(t.id), JSON.stringify({ packing: ((t.checklists && t.checklists.packing) || []).filter(i => !i.shared) }))); } catch (e) {}
 }
+
 function hydrateDeviceChecklists() {
-  try { appData.trips.forEach(t => { const raw = localStorage.getItem(checklistStorageKey(t.id)); if (raw) t.checklists = JSON.parse(raw); else localStorage.setItem(checklistStorageKey(t.id), JSON.stringify(t.checklists || { packing: [] })); }); } catch (e) { console.warn('Device checklist storage unavailable', e); }
+  (appData.trips || []).forEach(t => {
+    const key = checklistStorageKey(t.id);
+    let personal = null;
+    try { const raw = localStorage.getItem(key); if (raw) personal = (JSON.parse(raw).packing || []).filter(i => !i.shared); } catch (e) {}
+    if (!personal) {
+      personal = ((t.checklists && t.checklists.packing) || []).filter(i => !i.shared);
+      try { localStorage.setItem(key, JSON.stringify({ packing: personal })); } catch (e) {}
+    }
+    const shared = (t.sharedChecklist || []).map(i => ({ ...i, shared: true }));
+    t.checklists = { packing: [...shared, ...personal] };
+    delete t.sharedChecklist;
+  });
 }
+
 function listenToCloudChanges() {
   const docRef = db.collection("travelHub").doc("sharedTripData");
-
   docRef.onSnapshot((doc) => {
     if (doc.exists) {
+      const prevTrip = activeTripId, viewing = !document.getElementById('section-trip-dashboard')?.classList.contains('hidden');
       appData = doc.data();
       hydrateDeviceChecklists();
       if (appData.currentTripId) activeTripId = appData.currentTripId;
-
       let trip = getActiveTrip();
-      if (syncMasterLocations(trip)) saveAppData();
+      if (trip && syncMasterLocations(trip)) saveAppData();
 
       localStorage.setItem("lily_pond_image2_data", JSON.stringify(appData));
       renderHomeViews();
       renderActiveTripDashboard();
+      if (viewing && !(appData.trips || []).some(t => t.id === prevTrip)) openHomePage();
     } else {
       const trip = getActiveTrip();
-      if (typeof getAllMasterLocations === 'function' && (!trip.places || trip.places.length === 0)) {
+      if (trip && typeof getAllMasterLocations === 'function' && (!trip.places || trip.places.length === 0)) {
         trip.places = getAllMasterLocations();
       }
       saveAppData();
     }
   }, (error) => {
     const saved = localStorage.getItem("lily_pond_image2_data");
-    if (saved) appData = JSON.parse(saved);
+    if (saved) { appData = JSON.parse(saved); hydrateDeviceChecklists(); }
     renderHomeViews();
     renderActiveTripDashboard();
   });
 }
 
-// Add any new spots from location.js (and fill in missing coordinates) without touching your edits
 function syncMasterLocations(trip) {
   if (typeof getAllMasterLocations !== 'function') return false;
   let changed = false;
@@ -297,7 +349,6 @@ function syncMasterLocations(trip) {
   return changed;
 }
 
-// Stylised "pond map": pins + dashed route, no external map service needed
 function renderSvgMap(el, pts, opts = {}) {
   if (!pts.length) { el.innerHTML = `<div class="h-28 flex items-center justify-center text-xs text-stone-400 px-6 text-center" style="background: var(--beige);">${opts.empty || 'No mapped places yet'}</div>`; return; }
   const W = 360, H = 190, pad = 28;
@@ -329,7 +380,7 @@ function renderMiniMap(id, pts, opts = {}) {
   if (!el) return;
   pts = pts.filter(p => p.lat && p.lng);
   if (!window.L) return renderSvgMap(el, pts, opts);
-  if (!el.offsetParent) { _pendingMaps[id] = [pts, opts]; return; }   // page hidden: draw it when shown
+  if (!el.offsetParent) { _pendingMaps[id] = [pts, opts]; return; }
   delete _pendingMaps[id];
   if (!pts.length) {
     if (_lmaps[id]) { try { _lmaps[id].map.remove(); } catch (e) {} delete _lmaps[id]; }
@@ -366,12 +417,12 @@ function renderMiniMap(id, pts, opts = {}) {
   const cap = opts.caption || (opts.route ? `${pts.length} stop${pts.length > 1 ? 's' : ''} • ≈ ${km.toFixed(1)} km straight-line${km <= 8 ? ` • ~${Math.round(km * 1000 / WALK_M_PER_MIN)} min if on foot` : ' • includes train / car legs'}` : '');
   const capEl = el.lastChild; capEl.style.display = cap ? '' : 'none'; capEl.textContent = cap ? '🦆 ' + cap : '';
 }
+
 function flushPendingMaps() {
   Object.keys(_pendingMaps).forEach(id => renderMiniMap(id, ..._pendingMaps[id]));
   Object.values(_lmaps).forEach(r => { try { r.fit && r.fit(); } catch (e) {} });
 }
 
-// Real location (asked once; keeps updating while the app is open)
 function ensureLocation() {
   if (_locWatch !== null || !navigator.geolocation) return;
   _locWatch = navigator.geolocation.watchPosition(pos => {
@@ -380,6 +431,7 @@ function ensureLocation() {
     if (moved) refreshLocationViews();
   }, () => { userLoc.live = false; userLoc.denied = true; refreshLocationViews(); }, { enableHighAccuracy: true, maximumAge: 20000, timeout: 20000 });
 }
+
 function refreshLocationViews() {
   if (!document.getElementById('page-master')?.classList.contains('hidden')) renderMasterPlacesList();
   if (!document.getElementById('page-waddle')?.classList.contains('hidden')) renderWaddleView();
@@ -387,7 +439,6 @@ function refreshLocationViews() {
   if (d && !d.classList.contains('hidden') && window._openSpotId) { const p = (getActiveTrip().places || []).find(x => x.id === window._openSpotId); if (p) openSpotDetailView(p, true); }
 }
 
-// Back / forward buttons move between pages instead of leaving the app
 function navPush(state) { if (_popping) return; try { history.pushState(state, ''); } catch (e) {} }
 window.addEventListener('popstate', e => {
   const s = e.state || { v: 'home' };
@@ -406,10 +457,12 @@ window.addEventListener('popstate', e => {
 function saveAppData() {
   appData.currentTripId = activeTripId;
   saveDeviceChecklists();
-  localStorage.setItem("lily_pond_image2_data", JSON.stringify(appData));
-  // Shared trip content syncs across devices; packing/checklist data stays device-local.
   const sharedData = JSON.parse(JSON.stringify(appData));
-  (sharedData.trips || []).forEach(t => { delete t.checklists; });
+  (sharedData.trips || []).forEach(t => {
+    t.sharedChecklist = ((t.checklists && t.checklists.packing) || []).filter(i => i.shared).map(i => { const c = { ...i }; delete c.fileData; return c; });
+    delete t.checklists;
+  });
+  try { localStorage.setItem("lily_pond_image2_data", JSON.stringify(sharedData)); } catch (e) {}
   db.collection("travelHub").doc("sharedTripData").set(sharedData).catch((err) => console.error("Cloud sync error:", err));
 }
 
@@ -431,15 +484,12 @@ function getActiveTrip() {
   return trip;
 }
 
-// --- NAVIGATION & BOTTOM NAVBAR TOGGLE ---
+// NAVIGATION FUNCTIONS
 function openHomePage(subTab = 'upcoming') {
   navPush({ v: 'home' });
   document.getElementById('section-home')?.classList.remove('hidden');
   document.getElementById('section-trip-dashboard')?.classList.add('hidden');
-  
-  // Hide bottom navbar on Home Screen
   document.getElementById('floating-bottom-nav')?.classList.add('hidden');
-  
   switchHomeTab(subTab);
 }
 
@@ -503,13 +553,13 @@ function openTripDashboard(tripId) {
   saveAppData();
   document.getElementById('section-home')?.classList.add('hidden');
   document.getElementById('section-trip-dashboard')?.classList.remove('hidden');
-  
-  // Show bottom navbar inside trip dashboard
   document.getElementById('floating-bottom-nav')?.classList.remove('hidden');
 
-  const globalTripName = document.getElementById('global-trip-name'); if (globalTripName) globalTripName.textContent = getActiveTrip()?.name || 'Your trip';
+  const globalTripName = document.getElementById('global-trip-name'); 
+  if (globalTripName) globalTripName.textContent = getActiveTrip()?.name || 'Your trip';
   renderActiveTripDashboard();
-  const ti = tripTodayIndex(getActiveTrip()); if (ti) activeItineraryDay = ti;   // open on today when you are on the trip
+  const ti = tripTodayIndex(getActiveTrip()); 
+  if (ti) activeItineraryDay = ti;
   switchDashboardPage('summary');
 }
 
@@ -522,13 +572,6 @@ function isUpcoming(t) {
   const now = new Date(), lim = new Date(); lim.setMonth(lim.getMonth() + 6);
   const s = new Date(t.startDate), e = new Date(t.endDate || t.startDate);
   return (isNaN(e) || e >= now) && (isNaN(s) || s <= lim);
-}
-
-function quickOpen(page) {
-  const t = appData.trips.find(isUpcoming) || appData.trips[0];
-  if (!t) return openTripModal();
-  openTripDashboard(t.id);
-  switchDashboardPage(page);
 }
 
 function renderUpcomingTripsList() {
@@ -568,7 +611,6 @@ function renderAllTripsList() {
   const container = document.getElementById('all-trips-list');
   if (!container) return;
   container.innerHTML = "";
-
   const query = (document.getElementById('tripSearchInput')?.value || '').toLowerCase();
   const catFilter = document.getElementById('tripCategoryFilter')?.value || 'ALL';
 
@@ -578,6 +620,10 @@ function renderAllTripsList() {
     return matchesQuery && matchesCat;
   });
 
+  if (!filtered.length) {
+    container.innerHTML = `<p class="text-xs text-stone-400 text-center py-8">${appData.trips.length ? 'No trips match your search.' : 'No trips yet. Tap + to plan one.'}</p>`;
+    return;
+  }
   filtered.forEach(trip => {
     const card = document.createElement('div');
     card.className = "lily-card p-4 flex justify-between items-center cursor-pointer bg-white/90";
@@ -587,13 +633,16 @@ function renderAllTripsList() {
         <h4 style="color: var(--olive-green);" class="font-bold text-base">${trip.name}</h4>
         <p class="text-xs text-stone-400">${trip.category} • ${trip.startDate || 'TBD'}</p>
       </div>
-      <button class="text-xs px-3 py-1.5 rounded-xl font-semibold text-white" style="background-color: var(--rose-pink);">Open ➔</button>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <button onclick="event.stopPropagation(); confirmDeleteTrip('${trip.id}')" aria-label="Delete trip" class="w-8 h-8 rounded-full flex items-center justify-center text-stone-300 hover:text-red-500"><i class="fa-solid fa-trash text-xs"></i></button>
+        <button class="text-xs px-3 py-1.5 rounded-xl font-semibold text-white" style="background-color: var(--rose-pink);">Open ➔</button>
+      </div>
     `;
     container.appendChild(card);
   });
 }
 
-// --- SUMMARY DASHBOARD PAGE ---
+// SUMMARY DASHBOARD PAGE
 function renderSummaryPage() {
   const trip = getActiveTrip();
   if (!trip) return;
@@ -608,7 +657,6 @@ function renderSummaryPage() {
     ? `linear-gradient(rgba(77,90,46,.4), rgba(57,67,31,.85)), url(${trip.coverImage}) center/cover`
     : 'linear-gradient(135deg, var(--midnight-blue), var(--dark-green))';
 
-  // Trip readiness calculation
   const packingCount = (trip.checklists?.packing || []).length;
   const packedDone = (trip.checklists?.packing || []).filter(i => i.done).length;
   const packPercent = packingCount > 0 ? Math.round((packedDone / packingCount) * 100) : 100;
@@ -619,10 +667,9 @@ function renderSummaryPage() {
   const bar = document.getElementById('readiness-bar-fill');
   if (bar) bar.style.width = `${packPercent}%`;
 
-  // Render Uploaded Document Preview inside Summary
   const docPreview = document.getElementById('summary-doc-preview');
   if (docPreview) {
-    const docItems = (trip.checklists?.packing || []).filter(i => i.category === 'documents' && i.fileData);
+    const docItems = (trip.checklists?.packing || []).filter(i => i.category === 'documents' && (i.fileData || i.photoRef));
     if (docItems.length > 0) {
       const topDoc = docItems[0];
       docPreview.innerHTML = `
@@ -631,7 +678,7 @@ function renderSummaryPage() {
             <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">Uploaded Document</span>
             <h4 style="color: var(--olive-green);" class="font-bold text-xs mt-1">${topDoc.text}</h4>
           </div>
-          <img src="${topDoc.fileData}" onclick="openImageViewer(this.src)" class="w-12 h-12 object-cover rounded-xl border border-stone-200 cursor-pointer" />
+          <img src="${docPhoto(topDoc) || PLACEHOLDER_IMG}" onclick="openImageViewer(this.src)" class="w-12 h-12 object-cover rounded-xl border border-stone-200 cursor-pointer" />
         </div>
       `;
     } else {
@@ -640,6 +687,25 @@ function renderSummaryPage() {
   }
 
   renderStarredLocationsSummary();
+  renderPostTravelInfographicCard(trip);
+}
+
+function renderPostTravelInfographicCard(trip) {
+  const card = document.getElementById('post-travel-card');
+  if (!card) return;
+  const isPast = trip.endDate && new Date(trip.endDate) < new Date();
+  if (isPast) {
+    card.classList.remove('hidden');
+    const spotsCount = (trip.places || []).filter(p => p.starred).length || (trip.places || []).length;
+    let totalExp = 0;
+    (trip.expenses || []).forEach(e => { totalExp += expToTrip(trip, e) || 0; });
+    
+    document.getElementById('stat-spots-count').textContent = spotsCount;
+    document.getElementById('stat-expenses-total').textContent = fmtMoney(totalExp, tripCur(trip));
+    document.getElementById('stat-days-count').textContent = getTotalTripDays(trip);
+  } else {
+    card.classList.add('hidden');
+  }
 }
 
 function renderStarredLocationsSummary() {
@@ -695,7 +761,6 @@ function renderStarredLocationsSummary() {
   }
 }
 
-// --- WADDLE EXPLORATION ---
 function getActiveHotelCity(trip) {
   const hotelName = trip.activeHotel || "";
   if (typeof hotelDatabase !== 'undefined' && hotelDatabase) {
@@ -738,7 +803,6 @@ function renderWaddleView() {
 
   if (quickHubsContainer) {
     quickHubsContainer.innerHTML = "";
-    
     const hotelChip = document.createElement('button');
     hotelChip.className = `px-3.5 py-1.5 rounded-2xl text-xs font-semibold transition-all ${selectedWaddleCluster === 'NEAR_HOTEL' ? 'bg-amber-600 text-white shadow-xs' : 'bg-white text-stone-600 border border-stone-200'}`;
     hotelChip.innerHTML = `<i class="fa-solid fa-hotel me-1"></i>Near Hotel`;
@@ -821,7 +885,6 @@ function renderWaddleView() {
   });
 }
 
-// --- SPOTS DETAIL VIEW (Image 7 & 8 Concept: Back Button, Edit, Star & Gallery) ---
 function openSpotDetailView(place, silent) {
   window._openSpotId = place.id;
   const container = document.getElementById('page-spot-detail');
@@ -836,7 +899,7 @@ function openSpotDetailView(place, silent) {
   const imgs = (place.gallery && place.gallery.length) ? place.gallery : [];
   const hasSt = place.station && place.station !== 'N/A' && place.station !== 'No station nearby';
   const meKm = userLoc.live && place.lat ? calculateDistanceInKm(userLoc.lat, userLoc.lng, place.lat, place.lng) : null;
-  const meMins = meKm !== null ? Math.round(meKm * 1000 / WALK_M_PER_MIN) : null;   // walking minutes from where you are
+  const meMins = meKm !== null ? Math.round(meKm * 1000 / WALK_M_PER_MIN) : null;
   const dir = place.lat ? `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}` : (place.map || 'https://maps.google.com/?q=' + encodeURIComponent(place.name));
   const tiles = [
     ['fa-tag', 'Category', place.category || 'Spot'],
@@ -896,17 +959,21 @@ function closeSpotDetail() {
 function triggerSpotPhotoUpload(placeId) {
   const input = document.createElement('input');
   input.type = 'file'; input.accept = 'image/*';
-  input.onchange = (e) => {
+  input.onchange = async (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
-    scaleImage(f, 800, data => {
-      const place = getActiveTrip().places.find(p => p.id === placeId);
-      if (place) { (place.gallery = place.gallery || []).unshift(data); saveAppData(); openSpotDetailView(place); }
-    });
+    const url = await uploadImageToFirebase(f, "spot_photos");
+    const place = getActiveTrip().places.find(p => p.id === placeId);
+    if (place) {
+      const finalUrl = url || await new Promise(res => scaleImage(f, 800, res));
+      (place.gallery = place.gallery || []).unshift(finalUrl); 
+      saveAppData(); 
+      openSpotDetailView(place); 
+    }
   };
   input.click();
 }
 
-// --- LOCATIONS PAGE (Nearby First) ---
+// SPOTS PAGE (UPDATED CITY FILTERING)
 function renderLocationsPage() { renderMasterPlacesList(); }
 function toggleSpotsAllCities() { spotsAllCities = !spotsAllCities; masterCat = 'ALL'; renderMasterPlacesList(); }
 
@@ -914,18 +981,21 @@ function renderMasterPlacesList() {
   const container = document.getElementById('masterPlacesContainer');
   if (!container) return;
   const trip = getActiveTrip();
-  const city = getActiveHotelCity(trip), cityName = city.charAt(0).toUpperCase() + city.slice(1);
+  
+  const currentCity = getActiveHotelCity(trip) || "bandung";
+  const cityName = currentCity.charAt(0).toUpperCase() + currentCity.slice(1);
   const q = (document.getElementById('masterSearchInput')?.value || '').trim().toLowerCase();
 
-  // Only the hotel's city unless "Show all" is on; hide accidental duplicates (same name in same city)
   const seen = new Set();
-  const pool = (trip.places || []).filter(p => spotsAllCities || (p.city || 'jakarta').toLowerCase() === city).filter(p => {
+  const pool = (trip.places || []).filter(p => spotsAllCities || (p.city || currentCity).toLowerCase() === currentCity.toLowerCase()).filter(p => {
     const k = (p.name || '').trim().toLowerCase() + '|' + (p.city || '').toLowerCase();
     if (seen.has(k)) return false; seen.add(k); return true;
   });
 
   const note = document.getElementById('spots-city-note');
-  if (note) note.innerHTML = `${spotsAllCities ? 'All cities' : cityName + ' spots'} • <button onclick="toggleSpotsAllCities()" class="underline font-semibold">${spotsAllCities ? 'Only ' + cityName : 'Show all cities'}</button>${userLoc.live ? ' • nearest first' : ''}`;
+  if (note) {
+    note.innerHTML = `${spotsAllCities ? 'All Cities' : cityName + ' Spots'} • <button onclick="toggleSpotsAllCities()" class="underline font-semibold">${spotsAllCities ? 'Show ' + cityName + ' Only' : 'Show All Cities'}</button>${userLoc.live ? ' • Nearest first' : ''}`;
+  }
 
   const cats = ['ALL', ...new Set(pool.map(p => p.category || 'Other'))];
   if (!cats.includes(masterCat)) masterCat = 'ALL';
@@ -947,7 +1017,11 @@ function renderMasterPlacesList() {
     .sort((a, b) => { const x = dist(a), y = dist(b); if (x !== null && y !== null) return x - y; if (x !== null) return -1; if (y !== null) return 1; return (a.name || '').localeCompare(b.name || ''); });
 
   container.innerHTML = '';
-  if (list.length === 0) { container.innerHTML = `<p class="text-xs text-stone-400 text-center py-8 col-span-full">No spots found. Try another category, or tap + to add one.</p>`; return; }
+  if (list.length === 0) { 
+    container.innerHTML = `<p class="text-xs text-stone-400 text-center py-8 col-span-full">No spots found in ${cityName}. Tap <b>+</b> to add a spot in a new or existing city!</p>`; 
+    return; 
+  }
+  
   list.forEach(p => {
     const d = dist(p), img = p.gallery && p.gallery[0];
     const hasSt = p.station && p.station !== 'N/A' && p.station !== 'No station nearby';
@@ -957,10 +1031,10 @@ function renderMasterPlacesList() {
     card.innerHTML = `
       <div class="w-20 h-20 rounded-2xl flex-shrink-0 overflow-hidden flex items-center justify-center text-3xl" style="background: linear-gradient(160deg,#E3E2B0,#C4BA65);">${img ? `<img src="${img}" class="w-full h-full object-cover">` : (SPOT_EMOJI[p.category] || '📍')}</div>
       <div class="min-w-0 flex-1 space-y-0.5">
-        <p class="text-[10px] font-extrabold uppercase tracking-wide" style="color: var(--muted-teal);">${escapeHtml(p.category || 'Spot')}${spotsAllCities ? ' • ' + escapeHtml(p.city || '') : ''}</p>
+        <p class="text-[10px] font-extrabold uppercase tracking-wide" style="color: var(--muted-teal);">${escapeHtml(p.category || 'Spot')} • ${escapeHtml(p.city || cityName)}</p>
         <h4 class="font-extrabold text-sm leading-snug" style="color: var(--dark-green);">${escapeHtml(p.name)}</h4>
         <p class="text-[11px] text-stone-500 truncate"><i class="fa-solid ${hasSt ? 'fa-train-subway' : 'fa-person-walking'} me-1"></i>${escapeHtml(hasSt ? p.station : (p.walk || 'No station nearby'))}</p>
-        ${d !== null ? `<p class="text-[11px] font-semibold" style="color: var(--muted-teal);"><i class="fa-solid fa-location-arrow me-1"></i>${d.toFixed(1)} km • ~${Math.round(d * 1000 / WALK_M_PER_MIN)} min walk</p>` : (p.lat ? '' : '<p class="text-[11px] text-rose-600">no coordinates yet</p>')}
+        ${d !== null ? `<p class="text-[11px] font-semibold" style="color: var(--muted-teal);"><i class="fa-solid fa-location-arrow me-1"></i>${d.toFixed(1)} km • ~${Math.round(d * 1000 / WALK_M_PER_MIN)} min walk</p>` : ''}
       </div>
       <button onclick="event.stopPropagation(); toggleStarSpot('${p.id}')" class="text-xl px-1 flex-shrink-0" aria-label="Favourite">${p.starred ? '<span class="text-amber-500">★</span>' : '<span class="text-stone-300">☆</span>'}</button>`;
     container.appendChild(card);
@@ -991,7 +1065,7 @@ function unstarAllLocations() {
   }
 }
 
-// --- TIMELINE ITINERARY (Image 9 & 10 Concept) ---
+// ITINERARY TIMELINE
 function getTotalTripDays(trip) {
   if (!trip.startDate || !trip.endDate) return 5;
   const start = new Date(trip.startDate);
@@ -1008,7 +1082,6 @@ function dayParts(trip, d) {
     full: dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' }) };
 }
 
-// Find map coordinates for an activity: pinned spot/hotel first, then name matching
 function resolveCoord(trip, a) {
   if (a.placeId === 'hotel') { const h = getHotelObj(trip); if (h) return h; }
   const byId = a.placeId && trip.places.find(p => p.id === a.placeId);
@@ -1021,7 +1094,8 @@ function resolveCoord(trip, a) {
 
 function openDocById(id) {
   const d = getActiveTrip().checklists.packing.find(i => i.id === id);
-  if (d && d.fileData) openImageViewer(d.fileData);
+  const ph = d && docPhoto(d);
+  if (ph) openImageViewer(ph);
   else { switchDashboardPage('checklists'); selectPackingCategory('documents'); }
 }
 
@@ -1074,7 +1148,7 @@ function renderItinerary() {
           </div>
           ${a.notes ? `<p class="text-[11px] text-stone-400">${a.notes}</p>` : ''}
           ${doc ? `<button onclick="openDocById('${doc.id}')" class="w-full flex items-center gap-2 rounded-xl p-2 text-left" style="background: var(--beige);">
-            ${doc.fileData ? `<img src="${doc.fileData}" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">` : '<i class="fa-solid fa-ticket text-stone-500 px-2"></i>'}
+            ${docPhoto(doc) ? `<img src="${docPhoto(doc)}" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">` : '<i class="fa-solid fa-ticket text-stone-500 px-2"></i>'}
             <span class="text-[11px] font-semibold flex-1 truncate" style="color: var(--midnight-blue);">${doc.text}</span>
             <span class="text-[10px] font-bold" style="color: var(--muted-teal);">View</span></button>` : ''}
         </div>
@@ -1106,7 +1180,7 @@ function fillItinSelects(selPlace, selDoc) {
   if (placeInput && selected) placeInput.value = selected.name;
   if (hidden) hidden.value = selPlace || '';
   document.getElementById('itin-form-doc').innerHTML = '<option value="">None</option>'
-    + (trip.checklists?.packing || []).filter(i => i.category === 'documents').map(i => `<option value="${i.id}" ${i.id === selDoc ? 'selected' : ''}>${i.text}${i.fileData ? ' 📷' : ''}</option>`).join('');
+    + (trip.checklists?.packing || []).filter(i => i.category === 'documents').map(i => `<option value="${i.id}" ${i.id === selDoc ? 'selected' : ''}>${i.shared ? '👥 ' : '🔒 '}${i.text}${(i.fileData || i.photoRef) ? ' 📷' : ''}</option>`).join('');
   document.getElementById('itin-form-docfile').value = '';
 }
 
@@ -1186,9 +1260,10 @@ function saveItineraryForm() {
   const file = document.getElementById('itin-form-docfile').files[0];
   const finish = (data) => {
     let docId = document.getElementById('itin-form-doc').value || null;
-    if (data) {   // a new ticket photo becomes a Document in Checklist
+    if (data) {
       docId = 'd_' + Date.now();
-      trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, fileData: data });
+      savePhotoDoc(docId, data);
+      trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, shared: true, photoRef: docId });
     }
     const act = { day: activeItineraryDay, title: v('title'), time: v('time'), location: v('location'), notes: v('notes'),
       starred: false, placeId: (document.getElementById('itin-form-place').value || null), docId };
@@ -1211,7 +1286,7 @@ function deleteItineraryActivity(realIdx) {
   }
 }
 
-// --- MERGED PACKING & DOCS SUB-TAB (2 TABS: PACKING & EXPENSES) ---
+// PACKING & EXPENSES SUB-TAB LOGIC
 function selectPackingCategory(cat) {
   activePackingCategory = cat;
   const categories = ['clothes', 'toiletries', 'electronics', 'documents'];
@@ -1239,7 +1314,6 @@ function renderCategorizedPackingList() {
   const packingQuery = (document.getElementById('packingSearchInput')?.value || '').trim().toLowerCase();
   const items = (trip.checklists.packing || []).filter(item => (item.category || 'clothes') === activePackingCategory && (item.text || '').toLowerCase().includes(packingQuery));
 
-  // Pin / Starred items always on top
   items.sort((a, b) => (b.important ? 1 : 0) - (a.important ? 1 : 0));
 
   if (items.length === 0) {
@@ -1256,6 +1330,7 @@ function renderCategorizedPackingList() {
         <label class="flex items-center space-x-2.5 cursor-pointer">
           <input type="checkbox" ${item.done ? 'checked' : ''} onchange="togglePackingDone(${realIdx})" class="rounded text-amber-600">
           <span class="${item.done ? 'line-through text-stone-400' : 'text-stone-800 font-medium'}">${item.text}</span>
+          <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style="${item.shared ? 'background:#E3E6B8;color:var(--midnight-blue);' : 'background:#f1efe4;color:#8a8a7a;'}">${item.shared ? '👥 Shared' : '🔒 Only me'}</span>
         </label>
         <div class="flex items-center space-x-2">
           <button onclick="togglePackingImportant(${realIdx})" class="focus:outline-none">
@@ -1265,7 +1340,7 @@ function renderCategorizedPackingList() {
           <button onclick="deletePackingItem(${realIdx})" class="text-stone-300 hover:text-red-500"><i class="fa-solid fa-trash text-xs"></i></button>
         </div>
       </div>
-      ${item.fileData ? `<img src="${item.fileData}" onclick="openImageViewer(this.src)" class="w-full h-32 object-cover rounded-xl border border-stone-100 mt-1 cursor-pointer" />` : ''}
+      ${docPhoto(item) ? `<img src="${docPhoto(item)}" onclick="openImageViewer(this.src)" class="w-full h-32 object-cover rounded-xl border border-stone-100 mt-1 cursor-pointer" />` : ''}
     `;
     container.appendChild(div);
   });
@@ -1276,6 +1351,7 @@ function openPackingItemModal() {
   document.getElementById('pack-form-text').value = "";
   document.getElementById('pack-form-category').value = activePackingCategory;
   document.getElementById('pack-form-file').value = "";
+  document.getElementById('pack-form-shared').checked = false;
   document.getElementById('modal-packing-title').innerText = "Add Packing Item";
   toggleDocUploadVisibility();
   openModal('modal-packing');
@@ -1288,6 +1364,7 @@ function openEditPackingItem(idx) {
   document.getElementById('pack-form-text').value = it.text;
   document.getElementById('pack-form-category').value = it.category || 'clothes';
   document.getElementById('pack-form-file').value = "";
+  document.getElementById('pack-form-shared').checked = !!it.shared;
   document.getElementById('modal-packing-title').innerText = "Edit Item";
   toggleDocUploadVisibility();
   openModal('modal-packing');
@@ -1301,22 +1378,36 @@ function toggleDocUploadVisibility() {
 function savePackingItemForm() {
   const text = document.getElementById('pack-form-text').value.trim();
   const category = document.getElementById('pack-form-category').value;
+  const shared = document.getElementById('pack-form-shared').checked;
   const file = document.getElementById('pack-form-file')?.files?.[0];
   if (!text) return alert("Enter item name!");
   const trip = getActiveTrip();
   if (!trip.checklists.packing) trip.checklists.packing = [];
   const list = trip.checklists.packing;
-  const finish = (fileData) => {
-    if (editingPackingIndex !== null && list[editingPackingIndex]) {
-      const it = list[editingPackingIndex];
-      it.text = text; it.category = category;
-      if (fileData) it.fileData = fileData;
+  
+  const finish = async (newData) => {
+    let it;
+    if (editingPackingIndex !== null && list[editingPackingIndex]) it = list[editingPackingIndex];
+    else { it = { id: 'chk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), done: false, important: false, fileData: null }; list.push(it); }
+    it.text = text; it.category = category;
+    let photo = newData || it.fileData || null;
+    if (!photo && it.photoRef) photo = await fetchPhotoNow(it.photoRef);
+    if (shared) {
+      if (photo) { savePhotoDoc(it.id, photo); it.photoRef = it.id; delete it.fileData; }
     } else {
-      list.push({ id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2,7), text, category, done: false, important: false, fileData: fileData || null });
+      if (it.photoRef) { deletePhotoDoc(it.photoRef); delete it.photoRef; }
+      it.fileData = photo || null;
     }
+    it.shared = shared;
     saveAppData(); closeModal('modal-packing'); selectPackingCategory(category); renderSummaryPage();
   };
-  if (category === 'documents' && file) scaleImage(file, 1100, finish); else finish(null);
+  
+  if (category === 'documents' && file) {
+    uploadImageToFirebase(file, "documents").then(url => {
+      if (url) finish(url);
+      else scaleImage(file, 1100, finish);
+    });
+  } else finish(null);
 }
 
 function togglePackingDone(idx) {
@@ -1340,13 +1431,15 @@ function togglePackingImportant(idx) {
 
 function deletePackingItem(idx) {
   const trip = getActiveTrip();
+  const gone = trip.checklists.packing[idx];
+  if (gone && gone.photoRef) deletePhotoDoc(gone.photoRef);
   trip.checklists.packing.splice(idx, 1);
   saveAppData();
   renderCategorizedPackingList();
   renderSummaryPage();
 }
 
-// --- BILLING REPORTS EXPENSES ---
+// EXPENSES LOGIC
 function renderChecklistsAndExpenses() {
   renderCategorizedPackingList();
   renderExpenseSplit();
@@ -1434,7 +1527,7 @@ function computeSettlement(trip) {
     bal[e.paidBy] += amt;
     sp.forEach(m => { bal[m] -= amt / sp.length; });
   });
-  (trip.payments || []).forEach(p => {            // money already handed back between travellers
+  (trip.payments || []).forEach(p => {
     if ((p.cur || 'MYR') !== tc) return;
     if (p.from in bal) bal[p.from] += p.amt;
     if (p.to in bal) bal[p.to] -= p.amt;
@@ -1496,6 +1589,7 @@ function openPaymentModal(i) {
   document.getElementById('pay-amount').value = (Math.round(t.amt * 100) / 100).toString();
   openModal('modal-payment');
 }
+
 function savePayment() {
   const t = (window._tx || [])[_payIdx], amt = parseFloat(document.getElementById('pay-amount').value);
   if (!t) return;
@@ -1505,6 +1599,7 @@ function savePayment() {
   trip.payments.push({ id: 'pay_' + Date.now(), from: t.from, to: t.to, amt: Math.round(amt * 100) / 100, cur: tripCur(trip), at: todayIso() });
   saveAppData(); closeModal('modal-payment'); renderChecklistsAndExpenses();
 }
+
 function deletePayment(i) {
   const trip = getActiveTrip();
   if (!trip.payments || !trip.payments[i] || !confirm("Undo this payment record?")) return;
@@ -1548,10 +1643,10 @@ function saveTravelers() {
   if (!rows.length) return alert("Add at least one traveller.");
   const names = rows.map(r => r.name);
   if (new Set(names.map(n => n.toLowerCase())).size !== names.length) return alert("Each traveller needs a different name.");
-  const map = {};                                  // old name -> new name, so past expenses follow renames
+  const map = {};
   rows.forEach(r => { if (r.orig) map[r.orig] = r.name; });
   (trip.expenses || []).forEach(e => {
-    if (e.paidBy) e.paidBy = map[e.paidBy] || null;          // removed person: payer becomes unassigned
+    if (e.paidBy) e.paidBy = map[e.paidBy] || null;
     if (e.split) e.split = e.split.map(s => map[s]).filter(Boolean);
   });
   trip.members = names;
@@ -1570,6 +1665,7 @@ function fillExpenseWho(paidBy, split) {
   expSplitSel = new Set((split && split.length ? split : members).filter(m => members.includes(m)));
   renderExpenseSplitChips(members);
 }
+
 function renderExpenseSplitChips(members) {
   const box = document.getElementById('exp-form-split');
   box.innerHTML = '';
@@ -1590,7 +1686,7 @@ function expFormSetup(exp) {
   sel.innerHTML = Object.keys(CURRENCIES).map(c => `<option value="${c}">${c} (${CURRENCIES[c]})</option>`).join('');
   _expSetup = true;
   sel.value = (exp && exp.currency) || tc;
-  sel.dispatchEvent(new Event('change', { bubbles: true }));    // refresh the dropdown label
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
   _expSetup = false;
   const keep = exp && exp.currency && exp.currency !== tc && exp.rateCur === tc && exp.rate > 0;
   document.getElementById('exp-form-rate').value = keep ? exp.rate : '';
@@ -1711,7 +1807,7 @@ function switchChecklistSubTab(tab) {
   }
 }
 
-// --- HOTEL SELECTION LOGIC ---
+// HOTEL SELECTION LOGIC
 function populateHotelCityDropdown(selectedCity = "bandung") {
   const citySelect = document.getElementById('hotel-city-dropdown');
   if (!citySelect) return;
@@ -1788,7 +1884,32 @@ function saveHotelForm() {
   renderActiveTripDashboard();
 }
 
-// --- TRIPS MANAGEMENT MODALS ---
+// TRIPS MANAGEMENT MODALS
+let _deleteTripId = null;
+function confirmDeleteTrip(id) {
+  const t = appData.trips.find(x => x.id === (id || document.getElementById('trip-form-id').value));
+  if (!t) return;
+  _deleteTripId = t.id;
+  document.getElementById('delete-trip-name').textContent = t.name;
+  closeModal('modal-trip');
+  openModal('modal-delete-trip');
+}
+
+function deleteTripNow() {
+  const id = _deleteTripId;
+  if (!id) return;
+  const doomed = appData.trips.find(t => t.id === id);
+  ((doomed && doomed.checklists && doomed.checklists.packing) || []).forEach(i => { if (i.photoRef) deletePhotoDoc(i.photoRef); });
+  appData.trips = appData.trips.filter(t => t.id !== id);
+  try { localStorage.removeItem(checklistStorageKey(id)); } catch (e) {}
+  if (activeTripId === id) activeTripId = appData.trips.length ? appData.trips[0].id : null;
+  _deleteTripId = null;
+  saveAppData();
+  closeModal('modal-delete-trip');
+  renderHomeViews();
+  if (document.getElementById('section-home').classList.contains('hidden')) openHomePage('upcoming');
+}
+
 function setTripCurrencyField(code) {
   const s = document.getElementById('trip-form-currency');
   s.innerHTML = Object.keys(CURRENCIES).map(c => `<option value="${c}">${c} (${CURRENCIES[c]})</option>`).join('');
@@ -1821,13 +1942,19 @@ function openTripModal(tripIdToEdit = null) {
     setTripCurrencyField('MYR');
   }
   document.getElementById('trip-form-cover').value = '';
+  document.getElementById('trip-delete-btn')?.classList.toggle('hidden', !(tripIdToEdit && trip));
   openModal('modal-trip');
 }
 
 function saveTripForm() {
   const f = document.getElementById('trip-form-cover')?.files?.[0];
-  if (f) scaleImage(f, 900, d => { pendingCover = d; saveTripFormCore(); });
-  else { pendingCover = null; saveTripFormCore(); }
+  if (f) {
+    uploadImageToFirebase(f, "covers").then(url => {
+      pendingCover = url;
+      if (!pendingCover) scaleImage(f, 900, d => { pendingCover = d; saveTripFormCore(); });
+      else saveTripFormCore();
+    });
+  } else { pendingCover = null; saveTripFormCore(); }
 }
 
 function saveTripFormCore() {
@@ -1844,7 +1971,7 @@ function saveTripFormCore() {
       trip.category = document.getElementById('trip-form-category').value;
       trip.people = document.getElementById('trip-form-people').value;
       trip.budget = document.getElementById('trip-form-budget').value;
-      const oldCur = tripCur(trip);   // pin older expenses to the currency they were entered in
+      const oldCur = tripCur(trip);
       (trip.expenses || []).forEach(e => { if (!e.currency) { e.currency = oldCur; e.rate = 1; e.rateCur = oldCur; } });
       trip.currency = document.getElementById('trip-form-currency').value || 'MYR';
       if (pendingCover) trip.coverImage = pendingCover;
@@ -1943,6 +2070,7 @@ function saveMasterSpotForm() {
 }
 
 function renderActiveTripDashboard() {
+  if (!getActiveTrip()) return;
   setTimeout(() => { const t = getActiveTrip(); if (t) loadWeather(t); }, 0);
   renderSummaryPage();
   renderLocationsPage();
@@ -1954,9 +2082,7 @@ function renderActiveTripDashboard() {
 function openModal(id) { document.getElementById(id)?.classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id)?.classList.add('hidden'); }
 
-
-// Rounded, theme-matched dropdowns with custom option popups.
-// The original <select> remains the source of truth so existing app logic keeps working.
+// Custom Rounded Dropdowns initialization
 (function initRoundedDropdowns() {
   const SELECTOR = 'select:not([data-custom-dropdown-ready])';
 
@@ -2061,7 +2187,6 @@ function closeModal(id) { document.getElementById(id)?.classList.add('hidden'); 
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
   else init();
-  // A few dropdowns receive options after startup; the menu is rebuilt whenever opened.
   new MutationObserver(() => init()).observe(document.body, { childList: true, subtree: true });
   document.addEventListener('click', event => {
     if (event.target.closest('.custom-select-wrap')) return;
