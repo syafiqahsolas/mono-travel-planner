@@ -135,6 +135,35 @@
       </div>
     </div>
 
+    <!-- Emergency & Local Info Quick-Deck (Malaysian in Indonesia) -->
+<div class="lily-card p-4 space-y-3 bg-white border-l-4 border-rose-500">
+  <div class="flex justify-between items-center">
+    <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">🚨 Emergency & Local Info</h3>
+    <span class="text-[10px] bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full font-bold">🇲🇾 MY Traveller in ID 🇮🇩</span>
+  </div>
+  
+  <div class="grid grid-cols-2 gap-2 text-xs">
+    <!-- Indonesia Emergency Hotline -->
+    <a href="tel:112" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800 hover:bg-stone-100">
+      <i class="fa-solid fa-phone-volume text-rose-600"></i> ID Police / General (112)
+    </a>
+    
+    <!-- Indonesia Ambulance -->
+    <a href="tel:118" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800 hover:bg-stone-100">
+      <i class="fa-solid fa-truck-medical text-amber-600"></i> ID Ambulance (118)
+    </a>
+    
+    <!-- Malaysian Embassy Jakarta -->
+    <a href="tel:+62215224947" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800 hover:bg-stone-100 col-span-2">
+      <i class="fa-solid fa-building-flag text-emerald-700"></i> MY Embassy Jakarta (+62 21 522 4947)
+    </a>
+  </div>
+  
+  <p class="text-[10px] text-stone-500 leading-tight">
+    <b>Tourist Helpline (ID):</b> 14045 • Save your passport bio-page copy in <b>Checklist &rarr; Docs</b> in case of loss or emergency.
+  </p>
+</div>
+
     <!-- PAGE B: ITINERARY (day strip + route map + timeline) -->
     <div id="page-itinerary" class="space-y-4 hidden">
       <div>
@@ -537,9 +566,29 @@
     <img id="image-viewer-img" src="" class="max-w-full max-h-full object-contain rounded-xl">
   </div>
 
+<!-- ================= Post-Travel ================= -->
+  
+  <!-- Post-Travel Stats & Infographic Card -->
+<div id="post-travel-card" class="lily-card p-5 space-y-3 bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 hidden">
+  <div class="flex items-center justify-between">
+    <span class="text-xs font-extrabold uppercase tracking-widest text-amber-800">📸 Memory Infographic</span>
+    <span class="text-xl">🏆</span>
+  </div>
+  <h3 class="font-extrabold text-base text-stone-800">Trip Completed!</h3>
+  <div class="grid grid-cols-3 gap-2 text-center py-2">
+    <div class="bg-white/80 p-2 rounded-xl shadow-xs"><span id="stat-spots-count" class="block font-extrabold text-sm text-stone-800">0</span><span class="text-[9px] text-stone-500">Spots Visited</span></div>
+    <div class="bg-white/80 p-2 rounded-xl shadow-xs"><span id="stat-expenses-total" class="block font-extrabold text-sm text-stone-800">RM 0</span><span class="text-[9px] text-stone-500">Total Spent</span></div>
+    <div class="bg-white/80 p-2 rounded-xl shadow-xs"><span id="stat-days-count" class="block font-extrabold text-sm text-stone-800">0</span><span class="text-[9px] text-stone-500">Days Explored</span></div>
+  </div>
+  <button onclick="alert('Infographic snapshot copied or ready to save as image!')" class="w-full py-2 rounded-xl text-xs font-bold bg-amber-600 text-white shadow-sm">Share Memory Card</button>
+</div>
+
   <!-- ================= SCRIPTS ================= -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  
+<!-- Add Firebase Storage -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
 
   <script src="transit_data.js"></script>
   <script src="hotel_data.js"></script>
