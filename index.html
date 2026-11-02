@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Lily Pond">
-  <title>Lily Pond & Carnival Travel Hub</title>
+  <title>Waddl Travel Hub</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -61,7 +61,7 @@
   
     <div id="install-card" class="hidden lily-card p-4 flex items-center gap-3 bg-white">
       <span class="text-3xl">🦆</span>
-      <div class="flex-1 min-w-0"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Install Lily Pond</p><p id="install-hint" class="text-[11px] text-stone-500">Add it to your home screen. It also works offline.</p></div>
+      <div class="flex-1 min-w-0"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Install Waddl</p><p id="install-hint" class="text-[11px] text-stone-500">Add it to your home screen. It also works offline.</p></div>
       <button id="install-btn" onclick="installApp()" style="background-color: var(--midnight-blue);" class="px-3.5 py-2 rounded-xl text-xs font-bold text-white flex-shrink-0">Install</button>
     </div>
   </section>
@@ -133,13 +133,12 @@
         <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">Starred Itinerary Slots</h3>
         <div id="summary-tentative-snapshot" class="space-y-2"></div>
       </div>
-    </div>
 
-    <!-- Emergency & Local Info Quick-Deck (Malaysian in Indonesia) -->
+      <!-- Emergency & Local Info Quick-Deck (Malaysian in Indonesia) -->
 <div class="lily-card p-4 space-y-3 bg-white border-l-4 border-rose-500">
   <div class="flex justify-between items-center">
     <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">🚨 Emergency & Local Info</h3>
-    <span class="text-[10px] bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full font-bold">🇲🇾 MY Traveller in ID 🇮🇩</span>
+    <span class="text-[10px] bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full font-bold">MY Traveller in ID</span>
   </div>
   
   <div class="grid grid-cols-2 gap-2 text-xs">
@@ -158,11 +157,10 @@
       <i class="fa-solid fa-building-flag text-emerald-700"></i> MY Embassy Jakarta (+62 21 522 4947)
     </a>
   </div>
-  
-  <p class="text-[10px] text-stone-500 leading-tight">
-    <b>Tourist Helpline (ID):</b> 14045 • Save your passport bio-page copy in <b>Checklist &rarr; Docs</b> in case of loss or emergency.
-  </p>
 </div>
+    </div>
+
+    
 
     <!-- PAGE B: ITINERARY (day strip + route map + timeline) -->
     <div id="page-itinerary" class="space-y-4 hidden">
