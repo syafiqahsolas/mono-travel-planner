@@ -3,7 +3,7 @@
  * Master Hotel Database categorized by City
  */
 
-const hotelDatabase = {
+window.hotelDatabase = {
   jakarta: [
     { name: "Hotel Grand Sahid Jaya", lat: -6.210709476, lng: 106.8200146 },
     { name: "Park Hyatt Jakarta", lat: -6.1845858, lng: 106.8313233 }
