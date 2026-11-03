@@ -1378,10 +1378,13 @@ function triggerSpotPhotoUpload(placeId) {
     if (!files.length || !place) return;
     const st = document.getElementById('spot-upload-status'), added = [];
     for (let n = 0; n < files.length; n++) {
-      if (st) { st.classList.remove('hidden'); st.textContent = `Uploading photo ${n + 1} of ${files.length}…`; }
-      let url = await uploadImageToFirebase(files[n], 'spot_photos');
-      if (!url) url = await new Promise(res => scaleImage(files[n], 800, res));
-      added.push(url);
+      if (st) { st.classList.remove('hidden'); st.textContent = `Processing photo ${n + 1} of ${files.length}...`; }
+      
+      // Use your scaleImage function directly to convert the file to a local data URL
+      let url = await new Promise(res => scaleImage(files[n], 800, res));
+      if (url) {
+        added.push(url);
+      }
     }
     place.gallery = [...added, ...(place.gallery || [])];
     saveAppData(); openSpotDetailView(place, true); renderSummaryPage();
