@@ -1,5 +1,5 @@
 /**
- * LILY POND & CARNIVAL TRAVEL HUB - APP.JS
+ * Waddl TRAVEL HUB - APP.JS
  * Complete Logic with City Filtering Fix, Firebase Storage Integration,
  * Quick-Deck Emergency Support, Post-Travel Infographic Stats,
  * and Optimized Launch Speed.
@@ -18,7 +18,8 @@ const firebaseConfig = {
 // Initialize Firebase & Firestore
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const storage = firebase.storage();
+let storage = null;
+try { storage = firebase.storage(); } catch (e) { console.warn('Firebase Storage is not available', e); }
 
 try { if (db.enablePersistence) db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}   // keep data + edits when offline
 
@@ -90,21 +91,42 @@ const ticketIcon = t => TICKET_ICONS[t] || TICKET_ICONS.Other;
 let pendingCover = null;
 let userLoc = { lat: null, lng: null, live: false, denied: false };
 let masterCat = 'ALL', spotsAllCities = false, spotReturnPage = 'master', _popping = false, _locWatch = null;
-const SPOT_EMOJI = { Attraction: '🏛️', Coffee: '☕', Food: '🍜', 'Shopping Mall': '🛍️' };
+const SPOT_EMOJI = { Attraction: '🏛️', Coffee: '☕', Food: '🍜', 'Shopping Mall': '🛍️', Airport: '✈️', Transit: '🚆' };
 const WALK_M_PER_MIN = 80;
 const PLACEHOLDER_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4E888A"/><stop offset="1" stop-color="#113665"/></linearGradient></defs><rect width="600" height="400" fill="url(#g)"/></svg>');
 
 // Firebase Storage Upload Helper Function
 async function uploadImageToFirebase(file, folder = "user_uploads") {
+  if (!storage) return null;
   try {
-    const filename = `${folder}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-    const ref = storage.ref().child(filename);
-    const snap = await ref.put(file);
+    let body = file, type = file.type || 'image/jpeg';
+    try { const b = await scaleToBlob(file, 1600, 0.82); if (b) { body = b; type = 'image/jpeg'; } } catch (e) {}
+    const ref = storage.ref().child(`${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 7)}.jpg`);
+    const snap = await ref.put(body, { contentType: type });
     return await snap.ref.getDownloadURL();
   } catch (err) {
     console.error("Firebase Storage Upload Error:", err);
     return null;
   }
+}
+// Phone photos are 3-8 MB: shrink before uploading (about 300 KB each)
+function scaleToBlob(file, maxDim, q) {
+  return new Promise(resolve => {
+    const r = new FileReader();
+    r.onerror = () => resolve(null);
+    r.onload = e => {
+      const img = new Image();
+      img.onerror = () => resolve(null);
+      img.onload = () => {
+        const k = Math.min(1, maxDim / Math.max(img.width, img.height)), c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(b => resolve(b), 'image/jpeg', q);
+      };
+      img.src = e.target.result;
+    };
+    r.readAsDataURL(file);
+  });
 }
 
 function scaleImage(file, maxDim, cb) {
@@ -138,17 +160,33 @@ function stationLabel(lat, lng, city) {
   const s = stationsNear(lat, lng, city)[0];
   return s ? `${s.name} (${s.mins} min walk)` : "No station within 30 min walk";
 }
-function openImageViewer(src) { document.getElementById('image-viewer-img').src = src; openModal('modal-image'); }
+async function downloadViewerImage(e) {
+  const dl = document.getElementById('image-viewer-dl'), src = (dl && dl.dataset.src) || '';
+  if (!src || src.startsWith('data:')) return true;       // data photos: the link saves them directly
+  e.preventDefault(); e.stopPropagation();
+  try {
+    const b = await (await fetch(src)).blob(), a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = dl.getAttribute('download') || 'photo.jpg';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (err) { window.open(src, '_blank'); alert('The photo opened in a new tab. Press and hold it to save.'); }
+  return false;
+}
+function openImageViewer(src) {
+  document.getElementById('image-viewer-img').src = src;
+  const dl = document.getElementById('image-viewer-dl');
+  if (dl) { dl.dataset.src = src; dl.href = src; dl.setAttribute('download', 'lily-pond-' + new Date().toISOString().slice(0, 10) + '.jpg'); }
+  openModal('modal-image');
+}
 
 // Open-Meteo Weather Integration
 const WX = { 0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️', 45: '🌫️', 48: '🌫️', 51: '🌦️', 53: '🌦️', 55: '🌦️', 56: '🌧️', 57: '🌧️', 61: '🌧️', 63: '🌧️', 65: '🌧️', 66: '🌧️', 67: '🌧️', 71: '🌨️', 73: '🌨️', 75: '🌨️', 77: '🌨️', 80: '🌦️', 81: '🌧️', 82: '⛈️', 85: '🌨️', 86: '🌨️', 95: '⛈️', 96: '⛈️', 99: '⛈️' };
 const wxIcon = c => WX[c] || '🌡️';
 let _wx = {};
-function todayIso() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function todayIso(tz) { return nowIn(tz || DEVICE_TZ).date; }
 function tripDayIso(trip, n) { return new Date(new Date(trip.startDate).getTime() + (n - 1) * 864e5).toISOString().slice(0, 10); }
 function tripTodayIndex(trip) {
   if (!trip || !trip.startDate) return 0;
-  const n = Math.round((new Date(todayIso()) - new Date(trip.startDate)) / 864e5) + 1;
+  const n = Math.round((new Date(todayIso(tzOf(trip))) - new Date(trip.startDate)) / 864e5) + 1;
   return (n >= 1 && n <= getTotalTripDays(trip)) ? n : 0;
 }
 function weatherFor(trip, n) { const w = _wx[trip.id]; return (w && w.days && trip.startDate) ? w.days[tripDayIso(trip, n)] : null; }
@@ -236,14 +274,292 @@ function loadCachedAppData() {
     const saved = localStorage.getItem('lily_pond_image2_data');
     if (!saved) return;
     appData = JSON.parse(saved); hydrateDeviceChecklists();
-    renderHomeViews(); renderActiveTripDashboard();
+    renderNowCard(); renderHomeViews(); setTimeout(renderActiveTripDashboard, 0);
   } catch (e) { console.warn('No saved copy yet', e); }
 }
 
 // INITIALIZATION
+// ================= TIME ZONES =================
+const DEVICE_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kuala_Lumpur'; } catch (e) { return 'Asia/Kuala_Lumpur'; } })();
+const TIMEZONES = [['Asia/Jakarta', 'Jakarta / Bandung (WIB, UTC+7)'], ['Asia/Makassar', 'Bali / Makassar (WITA, UTC+8)'], ['Asia/Kuala_Lumpur', 'Malaysia (UTC+8)'], ['Asia/Singapore', 'Singapore (UTC+8)'], ['Asia/Bangkok', 'Thailand / Vietnam (UTC+7)'], ['Asia/Tokyo', 'Japan (UTC+9)'], ['Asia/Seoul', 'South Korea (UTC+9)'], ['Asia/Hong_Kong', 'Hong Kong (UTC+8)'], ['Australia/Sydney', 'Sydney'], ['Europe/London', 'London'], ['Europe/Paris', 'Paris / Central Europe'], ['America/New_York', 'New York'], ['America/Los_Angeles', 'Los Angeles']];
+const ID_TZ = ['Asia/Jakarta', 'Asia/Makassar', 'Asia/Jayapura', 'Asia/Pontianak'];
+const tzOf = trip => (trip && trip.tz) || 'Asia/Jakarta';
+function nowIn(tz, d = new Date()) {
+  const p = {};
+  new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(d).forEach(x => { p[x.type] = x.value; });
+  return { date: `${p.year}-${p.month}-${p.day}`, min: (+p.hour) * 60 + (+p.minute), label: `${p.hour}:${p.minute}` };
+}
+function tzOffsetMin(tz, d = new Date()) {
+  const n = nowIn(tz, d), [y, m, dd] = n.date.split('-').map(Number);
+  return Math.round((Date.UTC(y, m - 1, dd, Math.floor(n.min / 60), n.min % 60) - Math.floor(d.getTime() / 60000) * 60000) / 60000);
+}
+function tzDiffLabel(tz) {
+  const diff = (tzOffsetMin(tz) - tzOffsetMin(DEVICE_TZ)) / 60;
+  if (!diff) return 'same time as your phone';
+  const a = Math.abs(diff);
+  return `${a} hour${a === 1 ? '' : 's'} ${diff < 0 ? 'behind' : 'ahead of'} your phone`;
+}
+function tzShort(tz) { try { return new Intl.DateTimeFormat('en-GB', { timeZone: tz, timeZoneName: 'short' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName').value; } catch (e) { return ''; } }
+function setTripTzField(code) {
+  const s = document.getElementById('trip-form-tz');
+  s.innerHTML = TIMEZONES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  s.value = code; s.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// ================= SUN (works offline) =================
+function sunTimes(lat, lng, dateISO, tz) {
+  const rad = Math.PI / 180, deg = 180 / Math.PI;
+  const [Y, Mo, D] = dateISO.split('-').map(Number);
+  const N = Math.floor((Date.UTC(Y, Mo - 1, D) - Date.UTC(Y, 0, 0)) / 864e5);
+  const lngH = lng / 15, off = tzOffsetMin(tz, new Date(Date.UTC(Y, Mo - 1, D, 12))) / 60;
+  const calc = rising => {
+    const t = N + ((rising ? 6 : 18) - lngH) / 24, M = 0.9856 * t - 3.289;
+    let L = M + 1.916 * Math.sin(M * rad) + 0.020 * Math.sin(2 * M * rad) + 282.634; L = ((L % 360) + 360) % 360;
+    let RA = deg * Math.atan(0.91764 * Math.tan(L * rad)); RA = ((RA % 360) + 360) % 360;
+    RA += Math.floor(L / 90) * 90 - Math.floor(RA / 90) * 90; RA /= 15;
+    const sinDec = 0.39782 * Math.sin(L * rad), cosDec = Math.cos(Math.asin(sinDec));
+    const cosH = (Math.cos(90.833 * rad) - sinDec * Math.sin(lat * rad)) / (cosDec * Math.cos(lat * rad));
+    if (cosH > 1 || cosH < -1) return null;
+    const H = (rising ? 360 - deg * Math.acos(cosH) : deg * Math.acos(cosH)) / 15;
+    const T = H + RA - 0.06571 * t - 6.622;
+    return ((((T - lngH + off) % 24) + 24) % 24) * 60;
+  };
+  const rise = calc(true), set = calc(false);
+  return rise === null || set === null ? null : { rise, set };
+}
+const fmtMin = m => { m = Math.round(m); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+const timeToMin = t => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+function tripCenter(trip) {
+  const h = getHotelObj(trip); if (h) return { lat: h.lat, lng: h.lng };
+  const p = (trip.places || []).find(x => x.lat && x.lng); return p ? { lat: p.lat, lng: p.lng } : null;
+}
+
+// ================= TRAVEL TIME + PACE =================
+function travelMins(km) { return km <= 1.2 ? Math.max(1, Math.round(km * 1000 / WALK_M_PER_MIN)) : Math.round(km / 22 * 60) + 5; }
+const PACE = { none: { l: 'Free day', c: '#CFCDBD', t: '#39431f' }, relaxed: { l: 'Relaxed', c: '#C4BA65', t: '#39431f' }, balanced: { l: 'Balanced', c: '#8A8C41', t: '#fff' }, packed: { l: 'Packed', c: '#E9767F', t: '#fff' } };
+function dayStats(trip, d) {
+  const acts = (trip.itinerary || []).filter(a => a.day === d).sort((x, y) => (x.time || '99').localeCompare(y.time || '99'));
+  let km = 0, prev = null;
+  acts.forEach(a => { const c = resolveCoord(trip, a); if (c) { if (prev) km += calculateDistanceInKm(prev.lat, prev.lng, c.lat, c.lng); prev = c; } });
+  const score = acts.length + km * 0.5;
+  return { n: acts.length, km, pace: !acts.length ? 'none' : score < 3.5 ? 'relaxed' : score < 7 ? 'balanced' : 'packed' };
+}
+
+// ================= WHERE AM I (last known, instant) =================
+function myLoc() {
+  if (userLoc.live) return userLoc;
+  try { const s = JSON.parse(localStorage.getItem('lily_last_loc') || 'null'); if (s && Date.now() - s.t < 6 * 3600e3) return s; } catch (e) {}
+  return null;
+}
+
+// ================= "NEXT 30 MINUTES" (drawn from the saved copy, no network) =================
+function pickLiveTrip() {
+  const trips = appData.trips || [];
+  const live = t => { if (!t.startDate || !t.endDate) return false; const d = nowIn(tzOf(t)).date; return d >= t.startDate && d <= t.endDate; };
+  return trips.find(t => t.id === activeTripId && live(t)) || trips.find(live) || null;
+}
+function renderNowCard() {
+  const box = document.getElementById('now-card');
+  if (!box) return;
+  const trip = pickLiveTrip();
+  if (!trip) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const tz = tzOf(trip), now = nowIn(tz), total = getTotalTripDays(trip);
+  const dayN = Math.round((new Date(now.date) - new Date(trip.startDate)) / 864e5) + 1;
+  const acts = (trip.itinerary || []).map((a, i) => ({ a, i, m: timeToMin(a.time) })).filter(x => x.a.day === dayN && x.m !== null && !x.a.done).sort((x, y) => x.m - y.m);
+  let list = acts.filter(x => x.m >= now.min - 10 && x.m <= now.min + 30), heading = 'Next 30 minutes';
+  if (!list.length) {
+    const nxt = acts.find(x => x.m > now.min);
+    if (nxt) { list = [nxt]; heading = `Nothing for 30 minutes • next at ${fmtMin(nxt.m)}`; } else heading = acts.length ? 'All done for today 🎉' : 'Nothing planned today';
+  }
+  const me = myLoc();
+  const rows = list.map(({ a, i, m }) => {
+    const wait = m - now.min, when = wait <= 0 ? 'NOW' : wait >= 60 ? `in ${Math.floor(wait / 60)}h ${String(wait % 60).padStart(2, '0')}m` : `in ${wait} min`;
+    const c = resolveCoord(trip, a);
+    let leave = '';
+    if (c && me) {
+      const km = calculateDistanceInKm(me.lat, me.lng, c.lat, c.lng), mins = travelMins(km), by = m - mins - 5;
+      const late = by <= now.min;
+      leave = `<p class="text-xs font-bold mt-1" style="color: ${late ? '#FFC9CD' : '#E3E2B0'};">${late ? '⏱ Leave now' : '⏱ Leave by ' + fmtMin(by)} • ≈ ${mins} min ${km <= 1.2 ? 'walk' : 'by car'} • ${km.toFixed(1)} km</p>`;
+    }
+    const dir = c ? `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}` : (a.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.location)}` : '');
+    const doc = a.docId && (trip.checklists?.packing || []).find(x => x.id === a.docId);
+    const btn = 'px-3 py-2 rounded-xl text-[11px] font-bold bg-white/15 hover:bg-white/25';
+    return `<div class="now-row rounded-2xl p-3 bg-white/10">
+      <div class="flex justify-between items-start gap-3">
+        <div class="min-w-0"><p class="text-[11px] font-extrabold tracking-wide" style="color: #E3E2B0;">${fmtMin(m)} • ${when}</p>
+          <p class="text-lg font-extrabold leading-tight">${escapeHtml(a.title)}</p>
+          ${a.location ? `<p class="text-xs opacity-80 mt-0.5"><i class="fa-solid fa-location-dot me-1"></i>${escapeHtml(a.location)}</p>` : ''}${leave}</div>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-2.5">
+        ${dir ? `<a href="${dir}" target="_blank" rel="noopener" class="${btn}"><i class="fa-solid fa-diamond-turn-right me-1"></i>Directions</a>` : ''}
+        ${doc ? `<button onclick="openDocById('${doc.id}')" class="${btn}"><i class="fa-solid fa-ticket me-1"></i>Ticket</button>` : ''}
+        ${a.location || a.title ? `<button onclick="openDriverForActivity('${trip.id}', ${i})" class="${btn}"><i class="fa-solid fa-taxi me-1"></i>Show driver</button>` : ''}
+      </div></div>`;
+  }).join('');
+  const diff = tzDiffLabel(tz);
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="rounded-3xl p-4 text-white shadow-md space-y-3" style="background: linear-gradient(160deg, var(--midnight-blue), var(--dark-green));">
+    <div class="flex justify-between items-start gap-3">
+      <div><p class="text-[10px] font-extrabold uppercase tracking-widest opacity-80">🦆 Right now • ${escapeHtml(trip.name)} • Day ${dayN} of ${total}</p>
+        <p class="text-4xl font-extrabold leading-none mt-1">${now.label} <span class="text-xs font-semibold opacity-80">${tzShort(tz)}</span></p>
+        ${diff !== 'same time as your phone' ? `<p class="text-[11px] opacity-80 mt-1">Local time there • ${diff}</p>` : ''}</div>
+      <button onclick="openTodayFromNow('${trip.id}', ${dayN})" class="text-[11px] font-bold px-3 py-2 rounded-xl bg-white/15 flex-shrink-0">Full day ›</button>
+    </div>
+    <p class="text-[11px] font-extrabold uppercase tracking-wider opacity-80">${heading}</p>
+    ${rows ? `<div class="space-y-2">${rows}</div>` : ''}
+  </div>`;
+}
+function openTodayFromNow(tripId, dayN) { openTripDashboard(tripId); activeItineraryDay = dayN; switchDashboardPage('itinerary'); }
+
+// ================= SHOW TO DRIVER =================
+function openDriverCard(name, detail) {
+  const trip = getActiveTrip(), id = trip && ID_TZ.includes(tzOf(trip));
+  const phrase = (a, b) => `<div class="rounded-2xl bg-white/10 px-4 py-3"><p class="text-xl font-extrabold">${a}</p><p class="text-xs opacity-70">${b}</p></div>`;
+  document.getElementById('driver-body').innerHTML = `<p class="text-lg opacity-80 mb-2">${id ? 'Tolong antar saya ke:' : 'Please take me to:'}</p>
+    <h2 class="text-4xl md:text-6xl font-extrabold leading-tight break-words">${escapeHtml(name)}</h2>
+    ${detail ? `<p class="text-xl mt-3 opacity-80">${escapeHtml(detail)}</p>` : ''}
+    ${id ? `<div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-8">${phrase('Pakai argo, ya', 'Please use the meter')}${phrase('Berhenti di sini, ya', 'Please stop here')}${phrase('Pelan-pelan, ya', 'Slowly, please')}</div><p class="text-2xl font-extrabold mt-8">Terima kasih 🙏</p>` : ''}`;
+  openModal('modal-driver');
+}
+function openDriverForActivity(tripId, i) {
+  const t = (appData.trips || []).find(x => x.id === tripId), a = t && t.itinerary[i];
+  if (!a) return;
+  if (t.id !== activeTripId) activeTripId = t.id;
+  openDriverCard(a.location || a.title, a.location && a.location !== a.title ? a.title : '');
+}
+function openDriverForSpot(id) { const p = (getActiveTrip().places || []).find(x => x.id === id); if (p) openDriverCard(p.name, p.city || ''); }
+
+// ================= EMERGENCY & LOCAL INFO (Malaysian traveller) =================
+const LOCAL_INFO = {
+  Indonesia: {
+    emergency: [['General emergency', '112', '112'], ['Police', '110', '+62110'], ['Ambulance / medical', '118 or 119', '+62119'], ['Fire', '113', '+62113'], ['Search & rescue', '115', '+62115'], ['Natural disaster help', '129', '+62129']],
+    embassy: { name: 'Embassy of Malaysia, Jakarta', address: 'Jl. H.R. Rasuna Said Kav. X/6, No. 1–3, Kuningan, Jakarta Selatan 12950', phone: '+62 21 522 4947', tel: '+62215224947', after: '+62 813 8081 3036', afterTel: '+6281380813036', email: 'mwjakarta@kln.gov.my' },
+    facts: [['💱', 'Money', 'Indonesian rupiah (IDR). Keep some cash for markets and small warungs.'], ['🔌', 'Plugs', 'Type C / F sockets, 230 V. Malaysian (UK-style) plugs need an adapter.'], ['🚗', 'Driving', 'Traffic keeps to the left, like Malaysia.'], ['💧', 'Water', 'Stick to bottled or boiled water.'], ['📱', 'Getting around', 'Grab and Gojek ride-hailing are common. Use the app price, or agree the fare first.']],
+    source: 'Numbers: Indonesia Tourism (indonesia.travel). Embassy: kln.gov.my and Wisma Putra notices. Checked 2 Nov 2026. Please confirm before relying on them.'
+  }
+};
+const TZ_COUNTRY = { 'Asia/Jakarta': 'Indonesia', 'Asia/Makassar': 'Indonesia', 'Asia/Jayapura': 'Indonesia', 'Asia/Pontianak': 'Indonesia' };
+function openEmergency() {
+  const trip = pickLiveTrip() || getActiveTrip() || (appData.trips || [])[0];
+  const tz = tzOf(trip), info = LOCAL_INFO[TZ_COUNTRY[tz]];
+  const body = document.getElementById('emergency-body');
+  let html = '';
+  if (info) {
+    html += `<div class="grid grid-cols-2 gap-2">${info.emergency.map(([l, n, tel]) => `<a href="tel:${tel}" class="rounded-2xl p-3 text-white text-center shadow-sm" style="background: var(--carnival-red);"><span class="block text-3xl font-extrabold leading-none">${n}</span><span class="block text-[11px] font-semibold mt-1 opacity-90">${l}</span></a>`).join('')}</div>
+      <p class="text-[10px] text-stone-500">From a Malaysian SIM the buttons dial with +62. Tap to call.</p>
+      <div class="lily-card p-4 bg-white space-y-2"><p class="text-[10px] font-extrabold uppercase tracking-wider" style="color: var(--muted-teal);">🇲🇾 Malaysian help</p>
+        <p class="font-extrabold text-sm" style="color: var(--midnight-blue);">${info.embassy.name}</p>
+        <p class="text-xs text-stone-600">${info.embassy.address}</p>
+        <div class="flex flex-wrap gap-2 pt-1">
+          <a href="tel:${info.embassy.tel}" class="px-3 py-2 rounded-xl text-[11px] font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-phone me-1"></i>${info.embassy.phone}</a>
+          <a href="tel:${info.embassy.afterTel}" class="px-3 py-2 rounded-xl text-[11px] font-bold text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-phone-volume me-1"></i>After hours ${info.embassy.after}</a>
+          <a href="mailto:${info.embassy.email}" class="px-3 py-2 rounded-xl text-[11px] font-bold bg-stone-100 text-stone-700"><i class="fa-solid fa-envelope me-1"></i>${info.embassy.email}</a>
+          <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.embassy.name)}" target="_blank" rel="noopener" class="px-3 py-2 rounded-xl text-[11px] font-bold bg-stone-100 text-stone-700"><i class="fa-solid fa-map-location-dot me-1"></i>Map</a>
+        </div></div>
+      <div class="lily-card p-4 bg-white space-y-2"><p class="text-[10px] font-extrabold uppercase tracking-wider" style="color: var(--muted-teal);">Good to know</p>
+        ${info.facts.map(([e, k, v]) => `<p class="text-xs text-stone-700"><span class="me-1">${e}</span><b>${k}:</b> ${v}</p>`).join('')}
+        <p class="text-xs text-stone-700"><span class="me-1">🕐</span><b>Time:</b> ${nowIn(tz).label} ${tzShort(tz)} there • ${tzDiffLabel(tz)}.</p></div>
+      <p class="text-[10px] text-stone-400">${info.source}</p>`;
+  } else {
+    html += `<div class="lily-card p-4 bg-white text-xs text-stone-600">I don't have built-in emergency numbers for this destination yet. Use the notes below to save the local emergency number, your embassy and your insurer's 24-hour line.</div>`;
+  }
+  html += `<div class="lily-card p-4 bg-white space-y-2"><p class="text-[10px] font-extrabold uppercase tracking-wider" style="color: var(--muted-teal);">👥 Trip notes (shared with everyone)</p>
+      <textarea id="emg-shared-notes" onchange="saveEmergencyNotes()" rows="3" placeholder="Hotel phone, insurance 24-hour line, group meeting point…" style="font-size:16px" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-3 text-stone-800"></textarea></div>
+    <div class="lily-card p-4 bg-white space-y-2"><p class="text-[10px] font-extrabold uppercase tracking-wider" style="color: var(--muted-teal);">🔒 My medical info (only on this phone)</p>
+      <textarea id="emg-private-notes" onchange="saveEmergencyPrivate()" rows="3" placeholder="Blood type, allergies, medication, policy number…" style="font-size:16px" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-3 text-stone-800"></textarea></div>`;
+  body.innerHTML = html;
+  window._emgTripId = trip ? trip.id : null;
+  if (trip) {
+    document.getElementById('emg-shared-notes').value = trip.emergencyNotes || '';
+    try { document.getElementById('emg-private-notes').value = localStorage.getItem('lily_private_note_' + trip.id) || ''; } catch (e) {}
+  }
+  openModal('modal-emergency');
+}
+function saveEmergencyNotes() { const t = (appData.trips || []).find(x => x.id === window._emgTripId); if (t) { t.emergencyNotes = document.getElementById('emg-shared-notes').value; saveAppData(); } }
+function saveEmergencyPrivate() { try { localStorage.setItem('lily_private_note_' + window._emgTripId, document.getElementById('emg-private-notes').value); } catch (e) {} }
+
+// ================= CITIES (Spots shows only the city you are in) =================
+const placeCity = p => (p.city || '').trim() || 'Jakarta';
+function tripCities(trip) {
+  const m = new Map();
+  (trip.places || []).forEach(p => { const c = placeCity(p); if (!m.has(c.toLowerCase())) m.set(c.toLowerCase(), c); });
+  return [...m.values()].sort();
+}
+function hotelCityKey(trip) {
+  const hotelName = trip.activeHotel || '';
+  if (hotelName && typeof hotelDatabase !== 'undefined' && hotelDatabase) {
+    for (const [cityKey, cityHotels] of Object.entries(hotelDatabase)) if (cityHotels.some(h => h.name === hotelName)) return cityKey.toLowerCase();
+  }
+  return (trip.hotelCity || '').toLowerCase();
+}
+function currentCityInfo(trip) {
+  const cities = tripCities(trip);
+  if (!cities.length) return { city: '', src: '' };
+  const find = n => cities.find(c => c.toLowerCase() === String(n || '').toLowerCase());
+  try { const s = JSON.parse(localStorage.getItem('lily_spots_city_' + trip.id) || 'null'); if (s && Date.now() - s.t < 12 * 3600e3 && find(s.c)) return { city: find(s.c), src: 'your choice' }; } catch (e) {}
+  const me = myLoc();
+  if (me) {
+    let best = null, bd = 1e9;
+    (trip.places || []).forEach(p => { if (p.lat && p.lng) { const d = calculateDistanceInKm(me.lat, me.lng, p.lat, p.lng); if (d < bd) { bd = d; best = placeCity(p); } } });
+    if (best && bd < 80 && find(best)) return { city: find(best), src: 'your location' };
+  }
+  const hc = find(hotelCityKey(trip));
+  return hc ? { city: hc, src: 'your hotel' } : { city: cities[0], src: '' };
+}
+const currentCity = trip => currentCityInfo(trip).city;
+function setSpotsCity(c) {
+  const t = getActiveTrip();
+  try { localStorage.setItem('lily_spots_city_' + t.id, JSON.stringify({ c, t: Date.now() })); } catch (e) {}
+  masterCat = 'ALL'; renderMasterPlacesList(); renderWaddleView();
+}
+const tripTz = tzOf;
+function renderCityChips(cities, city) {
+  const box = document.getElementById('spots-city-chips');
+  if (!box) return;
+  box.innerHTML = '';
+  cities.forEach(c => {
+    const b = document.createElement('button'), on = c.toLowerCase() === city.toLowerCase();
+    b.className = `px-4 py-1.5 rounded-full text-[11px] font-extrabold border flex-shrink-0 ${on ? 'text-white border-transparent' : 'bg-white text-stone-600 border-stone-200'}`;
+    if (on) b.style.backgroundColor = 'var(--midnight-blue)';
+    b.innerHTML = `<i class="fa-solid fa-location-dot me-1"></i>${escapeHtml(c)}`;
+    b.onclick = () => setSpotsCity(c);
+    box.appendChild(b);
+  });
+  const add = document.createElement('button');
+  add.className = 'px-4 py-1.5 rounded-full text-[11px] font-extrabold border border-dashed border-stone-300 text-stone-600 flex-shrink-0';
+  add.innerHTML = '<i class="fa-solid fa-plus me-1"></i>New city';
+  add.onclick = () => openMasterSpotModal(true);
+  box.appendChild(add);
+}
+function seedPlacesFor(name) {
+  if (typeof getAllMasterLocations !== 'function') return [];
+  const n = (name || '').toLowerCase();
+  const base = getAllMasterLocations().filter(m => n.includes((m.city || '').toLowerCase()));
+  return [...base, ...transitSeedPlaces(new Set(base.map(m => (m.city || '').toLowerCase())))];
+}
+const slugOf = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+function airportToPlace(a) {
+  return { id: 'apt_' + a.code, name: `${a.name} (${a.code})`, category: 'Airport', code: a.code, city: a.city, lat: a.lat, lng: a.lng, station: '', walk: '', map: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.name)}`, starred: false };
+}
+// Train / MRT / LRT stations and airports for the cities a trip already uses
+function transitSeedPlaces(cities) {
+  const out = [];
+  if (typeof stationDatabase !== 'undefined') Object.entries(stationDatabase).forEach(([key, list]) => {
+    if (cities.has(key.toLowerCase())) list.forEach(st => out.push({ id: `trn_${key}_${slugOf(st.name)}`, name: st.name, category: 'Transit', transitType: st.category, city: key.charAt(0).toUpperCase() + key.slice(1), lat: st.lat, lng: st.lng, station: '', walk: '', map: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(st.name)}`, starred: false }));
+  });
+  if (typeof airportDatabase !== 'undefined') airportDatabase.forEach(a => { if (a.seedFor && cities.has(a.seedFor.toLowerCase())) out.push(airportToPlace(a)); });
+  return out;
+}
+function syncTransitSpots(trip) {
+  if (!trip.places) trip.places = [];
+  let changed = false;
+  transitSeedPlaces(new Set(trip.places.map(p => placeCity(p).toLowerCase()))).forEach(s => { if (!trip.places.some(p => p.id === s.id)) { trip.places.push(s); changed = true; } });
+  return changed;
+}
+
 window.onload = function() {
   initHotelDatabase();
-  showInstallCard(); updateOnlinePill(); loadCachedAppData();
+  showInstallCard(); updateOnlinePill();
   try { history.replaceState({ v: 'home' }, ''); } catch (e) {}
   listenToCloudChanges();
 };
@@ -321,6 +637,7 @@ function listenToCloudChanges() {
 
       localStorage.setItem("lily_pond_image2_data", JSON.stringify(appData));
       renderHomeViews();
+      renderNowCard();
       renderActiveTripDashboard();
       if (viewing && !(appData.trips || []).some(t => t.id === prevTrip)) openHomePage();
     } else {
@@ -341,11 +658,13 @@ function listenToCloudChanges() {
 function syncMasterLocations(trip) {
   if (typeof getAllMasterLocations !== 'function') return false;
   let changed = false;
+  const mine = new Set((trip.places || []).map(p => placeCity(p).toLowerCase()));   // only cities this trip already uses
   getAllMasterLocations().forEach(m => {
     const p = trip.places.find(x => x.id === m.id);
-    if (!p) { trip.places.push({ ...m }); changed = true; }
+    if (!p) { if (mine.has(String(m.city || '').toLowerCase())) { trip.places.push({ ...m }); changed = true; } }
     else if (!p.lat && m.lat) { p.lat = m.lat; p.lng = m.lng; changed = true; }
   });
+  if (syncTransitSpots(trip)) changed = true;
   return changed;
 }
 
@@ -428,11 +747,13 @@ function ensureLocation() {
   _locWatch = navigator.geolocation.watchPosition(pos => {
     const moved = !userLoc.live || calculateDistanceInKm(userLoc.lat, userLoc.lng, pos.coords.latitude, pos.coords.longitude) > 0.03;
     userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude, live: true, denied: false };
+    try { localStorage.setItem('lily_last_loc', JSON.stringify({ lat: userLoc.lat, lng: userLoc.lng, t: Date.now() })); } catch (e) {}
     if (moved) refreshLocationViews();
   }, () => { userLoc.live = false; userLoc.denied = true; refreshLocationViews(); }, { enableHighAccuracy: true, maximumAge: 20000, timeout: 20000 });
 }
 
 function refreshLocationViews() {
+  renderNowCard();
   if (!document.getElementById('page-master')?.classList.contains('hidden')) renderMasterPlacesList();
   if (!document.getElementById('page-waddle')?.classList.contains('hidden')) renderWaddleView();
   const d = document.getElementById('page-spot-detail');
@@ -459,7 +780,7 @@ function saveAppData() {
   saveDeviceChecklists();
   const sharedData = JSON.parse(JSON.stringify(appData));
   (sharedData.trips || []).forEach(t => {
-    t.sharedChecklist = ((t.checklists && t.checklists.packing) || []).filter(i => i.shared).map(i => { const c = { ...i }; delete c.fileData; return c; });
+    t.sharedChecklist = ((t.checklists && t.checklists.packing) || []).filter(i => i.shared).map(i => { const c = { ...i }; if (!String(c.fileData || '').startsWith('http')) delete c.fileData; return c; });
     delete t.checklists;
   });
   try { localStorage.setItem("lily_pond_image2_data", JSON.stringify(sharedData)); } catch (e) {}
@@ -690,22 +1011,77 @@ function renderSummaryPage() {
   renderPostTravelInfographicCard(trip);
 }
 
+function tripStats(trip) {
+  const total = getTotalTripDays(trip), acts = trip.itinerary || [], tc = tripCur(trip);
+  const visited = new Set();
+  acts.forEach(a => { if (a.done && a.placeId) visited.add(a.placeId); });
+  (trip.places || []).forEach(p => { if (p.visited) visited.add(p.id); });
+  let km = 0; for (let d = 1; d <= total; d++) km += dayStats(trip, d).km;
+  let spent = 0; const byCat = {};
+  (trip.expenses || []).forEach(e => { const v = expToTrip(trip, e); if (v !== null) { spent += v; const c = e.category || 'Other'; byCat[c] = (byCat[c] || 0) + v; } });
+  const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
+  const people = Math.max(1, getMembers(trip).length);
+  return { total, acts: acts.length, done: acts.filter(a => a.done).length, spots: visited.size, km, spent, perPerson: spent / people, people, top, tc,
+    photos: (trip.places || []).reduce((n, p) => n + (p.gallery || []).length, 0), cities: tripCities(trip) };
+}
 function renderPostTravelInfographicCard(trip) {
   const card = document.getElementById('post-travel-card');
-  if (!card) return;
-  const isPast = trip.endDate && new Date(trip.endDate) < new Date();
-  if (isPast) {
-    card.classList.remove('hidden');
-    const spotsCount = (trip.places || []).filter(p => p.starred).length || (trip.places || []).length;
-    let totalExp = 0;
-    (trip.expenses || []).forEach(e => { totalExp += expToTrip(trip, e) || 0; });
-    
-    document.getElementById('stat-spots-count').textContent = spotsCount;
-    document.getElementById('stat-expenses-total').textContent = fmtMoney(totalExp, tripCur(trip));
-    document.getElementById('stat-days-count').textContent = getTotalTripDays(trip);
-  } else {
-    card.classList.add('hidden');
-  }
+  if (!card || !trip) return;
+  const now = nowIn(tzOf(trip)).date;
+  if (!trip.startDate || now < trip.startDate) { card.classList.add('hidden'); return; }
+  const s = tripStats(trip), over = trip.endDate && now > trip.endDate, set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  card.classList.remove('hidden');
+  set('stat-title', over ? 'Trip completed! 🎉' : 'Your trip so far');
+  set('stat-days', s.total); set('stat-done', `${s.done}/${s.acts}`); set('stat-spots', s.spots);
+  set('stat-km', `${s.km.toFixed(0)} km`); set('stat-spent', fmtMoney(s.spent, s.tc)); set('stat-pp', fmtMoney(s.perPerson, s.tc));
+  set('stat-extra', [s.top ? `Biggest spend: ${s.top[0]}` : '', s.photos ? `${s.photos} photo${s.photos === 1 ? '' : 's'}` : '', s.cities.length ? s.cities.join(' • ') : ''].filter(Boolean).join('  •  '));
+}
+function drawTripCard(trip) {
+  const s = tripStats(trip), W = 1080, H = 1350, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d'), bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#F1ECD3'); bg.addColorStop(1, '#C4BA65'); g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.fillStyle = 'rgba(77,90,46,.10)';
+  [[150, 1190, 190], [940, 210, 140], [910, 1130, 120], [170, 250, 100]].forEach(([x, y, r]) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); });
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  g.textAlign = 'center'; g.fillStyle = '#4D5A2E'; g.font = '700 38px system-ui, sans-serif'; g.fillText('🦆  TRIP MEMORY  🪷', W / 2, 105);
+  g.font = '800 78px system-ui, sans-serif';
+  const words = String(trip.name || 'My trip').split(' '), lines = []; let cur = '';
+  words.forEach(w => { const t = cur ? cur + ' ' + w : w; if (g.measureText(t).width > 900 && cur) { lines.push(cur); cur = w; } else cur = t; });
+  lines.push(cur);
+  lines.slice(0, 3).forEach((l, i) => g.fillText(l, W / 2, 230 + i * 92));
+  const y0 = 230 + Math.min(lines.length, 3) * 92;
+  g.font = '600 38px system-ui, sans-serif'; g.fillStyle = '#5b6637';
+  g.fillText(`${trip.startDate || ''} – ${trip.endDate || ''}`, W / 2, y0 + 20);
+  if (s.cities.length) g.fillText(s.cities.join('  •  '), W / 2, y0 + 72);
+  const tiles = [['Days', String(s.total)], ['Activities done', `${s.done}/${s.acts}`], ['Spots visited', String(s.spots)], ['Distance planned', `${s.km.toFixed(0)} km`], ['Total spent', fmtMoney(s.spent, s.tc)], [`Per person (${s.people})`, fmtMoney(s.perPerson, s.tc)]];
+  tiles.forEach(([label, val], i) => {
+    const x = 70 + (i % 2) * 490, y = 480 + Math.floor(i / 2) * 230;
+    g.fillStyle = 'rgba(255,255,255,.88)'; rr(x, y, 450, 200, 36); g.fill();
+    g.fillStyle = '#4D5A2E'; let fs = 84; g.font = `800 ${fs}px system-ui, sans-serif`;
+    while (g.measureText(val).width > 400 && fs > 30) { fs -= 4; g.font = `800 ${fs}px system-ui, sans-serif`; }
+    g.fillText(val, x + 225, y + 105); g.font = '600 32px system-ui, sans-serif'; g.fillStyle = '#6b7340'; g.fillText(label, x + 225, y + 160);
+  });
+  g.fillStyle = '#4D5A2E'; g.font = '700 36px system-ui, sans-serif';
+  g.fillText([s.top ? `Biggest spend: ${s.top[0]}` : '', s.photos ? `${s.photos} photos` : ''].filter(Boolean).join('   •   '), W / 2, 1220);
+  g.font = '600 30px system-ui, sans-serif'; g.fillStyle = '#6b7340'; g.fillText('Made with Lily Pond Travel Hub 🪷', W / 2, 1290);
+  return c;
+}
+function downloadTripCard() {
+  const t = getActiveTrip();
+  drawTripCard(t).toBlob(b => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+    a.download = 'trip-memory-' + String(t.name || 'trip').replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.png';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }, 'image/png');
+}
+function shareTripCard() {
+  const t = getActiveTrip();
+  drawTripCard(t).toBlob(async b => {
+    const f = new File([b], 'trip-memory.png', { type: 'image/png' });
+    try { if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: t.name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    downloadTripCard();
+  }, 'image/png');
 }
 
 function renderStarredLocationsSummary() {
@@ -762,15 +1138,7 @@ function renderStarredLocationsSummary() {
 }
 
 function getActiveHotelCity(trip) {
-  const hotelName = trip.activeHotel || "";
-  if (typeof hotelDatabase !== 'undefined' && hotelDatabase) {
-    for (const [cityKey, cityHotels] of Object.entries(hotelDatabase)) {
-      if (cityHotels.some(h => h.name === hotelName)) {
-        return cityKey.toLowerCase();
-      }
-    }
-  }
-  return (trip.hotelCity || "bandung").toLowerCase();
+  return hotelCityKey(trip) || (currentCity(trip) || 'jakarta').toLowerCase();
 }
 
 function executeWaddleSearch() {
@@ -927,13 +1295,14 @@ function openSpotDetailView(place, silent) {
           </div>
           ${meMins !== null ? `<div class="flex-shrink-0 w-14 py-1.5 rounded-2xl text-center" style="background: var(--beige); color: var(--midnight-blue);"><span class="block text-lg font-extrabold leading-none">${meMins}</span><span class="block text-[9px] font-semibold mt-0.5">min walk</span></div>` : ''}
         </div>
-        <div><p class="font-bold text-sm mb-1" style="color: var(--midnight-blue);">About this spot</p>
-          <p class="text-xs text-stone-600 leading-relaxed">${place.desc ? escapeHtml(place.desc) : 'A saved spot for your trip. Tap the pencil to update its details, add photos from your visit, or add it to a day in your itinerary.'}</p></div>
+        <div id="spot-about-box">${spotAboutHtml(place, false)}</div>
         <div><p class="font-bold text-sm mb-2" style="color: var(--midnight-blue);">Details</p><div class="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2.5">${tiles}</div></div>
-        ${imgs.length > 1 ? `<div id="spot-gallery-thumbs" class="flex gap-2 overflow-x-auto pb-1">${imgs.map(u => `<img src="${u}" onclick="document.getElementById('spot-detail-main-img').src=this.src" class="w-14 h-14 object-cover rounded-xl border border-stone-200 cursor-pointer">`).join('')}</div>` : ''}
+        <div id="spot-gallery-box">${spotGalleryHtml(place)}</div>
         <div class="flex gap-2 pt-1">
           <a href="${dir}" target="_blank" rel="noopener" class="flex-1 py-3.5 rounded-2xl text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm" style="background-color: var(--midnight-blue);"><i class="fa-solid fa-diamond-turn-right"></i> Get directions</a>
           <button onclick="addSpotToItinerary('${place.id}')" aria-label="Add to itinerary" class="w-14 rounded-2xl border border-stone-200 flex items-center justify-center" style="color: var(--midnight-blue);"><i class="fa-solid fa-calendar-plus"></i></button>
+          <button onclick="openDriverForSpot('${place.id}')" aria-label="Show to driver" class="w-14 rounded-2xl border border-stone-200 flex items-center justify-center" style="color: var(--midnight-blue);"><i class="fa-solid fa-taxi"></i></button>
+          <button onclick="toggleVisitedSpot('${place.id}')" aria-label="Mark visited" class="w-14 rounded-2xl border flex items-center justify-center font-bold ${place.visited ? 'text-white border-transparent' : 'border-stone-200'}" style="${place.visited ? 'background: var(--muted-teal);' : 'color: var(--midnight-blue);'}"><i class="fa-solid fa-circle-check"></i></button>
         </div>
       </div>
     </div>`;
@@ -956,19 +1325,66 @@ function closeSpotDetail() {
   switchDashboardPage(spotReturnPage || 'master');
 }
 
+function spotAboutHtml(place, editing) {
+  const head = `<div class="flex items-center justify-between mb-1"><p class="font-bold text-sm" style="color: var(--midnight-blue);">About this spot • our thoughts</p>${editing ? '' : `<button onclick="startEditAbout('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600"><i class="fa-solid fa-pen me-1"></i>Edit</button>`}</div>`;
+  if (editing) return head + `<textarea id="spot-about-input" rows="5" maxlength="1500" placeholder="Our thoughts: what to order, best time to go, tips…" style="font-size:16px" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-3 text-stone-800">${escapeHtml(place.desc || '')}</textarea>
+    <div class="flex justify-end gap-2 mt-2"><button onclick="cancelAbout('${place.id}')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button><button onclick="saveAbout('${place.id}')" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white" style="background-color: var(--midnight-blue);">Save</button></div>`;
+  return head + (place.desc ? `<p class="text-xs text-stone-600 leading-relaxed whitespace-pre-line">${escapeHtml(place.desc)}</p>` : `<p class="text-xs text-stone-400 leading-relaxed">No notes yet. Tap Edit to add what you thought, tips, or what to order. Everyone on the trip sees it.</p>`);
+}
+function spotAboutBox(id, editing) { const p = (getActiveTrip().places || []).find(x => x.id === id), b = document.getElementById('spot-about-box'); if (p && b) { b.innerHTML = spotAboutHtml(p, editing); if (editing) document.getElementById('spot-about-input')?.focus(); } }
+function startEditAbout(id) { spotAboutBox(id, true); }
+function cancelAbout(id) { spotAboutBox(id, false); }
+function saveAbout(id) {
+  const p = (getActiveTrip().places || []).find(x => x.id === id);
+  if (!p) return;
+  p.desc = document.getElementById('spot-about-input').value.trim();
+  saveAppData(); spotAboutBox(id, false);
+}
+function toggleVisitedSpot(id) {
+  const p = (getActiveTrip().places || []).find(x => x.id === id);
+  if (!p) return;
+  p.visited = !p.visited; saveAppData(); openSpotDetailView(p, true); renderSummaryPage();
+}
+function toggleActivityDone(i) {
+  const a = getActiveTrip().itinerary[i];
+  if (!a) return;
+  a.done = !a.done; saveAppData(); renderItinerary(); renderSummaryPage(); renderNowCard();
+}
+
+function spotGalleryHtml(place) {
+  const imgs = place.gallery || [], manage = window._galleryManage === place.id;
+  return `<div class="flex items-center justify-between mb-2"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Photo gallery${imgs.length ? ' (' + imgs.length + ')' : ''}</p>
+    <div class="flex gap-2">${imgs.length ? `<button onclick="toggleGalleryManage('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600">${manage ? 'Done' : 'Manage'}</button>` : ''}
+    <button onclick="triggerSpotPhotoUpload('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-camera me-1"></i>Add</button></div></div>
+    <p id="spot-upload-status" class="text-[11px] font-semibold mb-1 hidden" style="color: var(--muted-teal);"></p>
+    ${imgs.length ? `<div class="grid grid-cols-3 gap-2">${imgs.map((u, i) => `<div class="relative aspect-square"><img src="${u}" onclick="openImageViewer(this.src)" loading="lazy" class="w-full h-full object-cover rounded-xl border border-stone-200 cursor-pointer">${manage ? `<button onclick="deleteGalleryPhoto('${place.id}', ${i})" aria-label="Delete photo" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full text-white text-xs flex items-center justify-center shadow" style="background: var(--carnival-red);"><i class="fa-solid fa-xmark"></i></button>` : ''}</div>`).join('')}</div>
+    <p class="text-[10px] text-stone-400 mt-2">Tap a photo to open it, then press Download to keep it.</p>` : `<p class="text-xs text-stone-400">No photos yet. Add the ones you take here. Anyone on the trip can open them and download.</p>`}`;
+}
+function toggleGalleryManage(id) { window._galleryManage = window._galleryManage === id ? null : id; const p = (getActiveTrip().places || []).find(x => x.id === id), b = document.getElementById('spot-gallery-box'); if (p && b) b.innerHTML = spotGalleryHtml(p); }
+function deleteGalleryPhoto(id, i) {
+  const p = (getActiveTrip().places || []).find(x => x.id === id);
+  if (!p || !p.gallery || !p.gallery[i] || !confirm("Delete this photo for everyone?")) return;
+  const url = p.gallery[i];
+  p.gallery.splice(i, 1);
+  try { if (storage && String(url).includes('firebasestorage')) storage.refFromURL(url).delete().catch(() => {}); } catch (e) {}
+  saveAppData(); openSpotDetailView(p, true);
+}
 function triggerSpotPhotoUpload(placeId) {
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = 'image/*';
+  input.type = 'file'; input.accept = 'image/*'; input.multiple = true;
   input.onchange = async (e) => {
-    const f = e.target.files && e.target.files[0]; if (!f) return;
-    const url = await uploadImageToFirebase(f, "spot_photos");
-    const place = getActiveTrip().places.find(p => p.id === placeId);
-    if (place) {
-      const finalUrl = url || await new Promise(res => scaleImage(f, 800, res));
-      (place.gallery = place.gallery || []).unshift(finalUrl); 
-      saveAppData(); 
-      openSpotDetailView(place); 
+    const files = [...(e.target.files || [])].slice(0, 12);
+    const place = (getActiveTrip().places || []).find(p => p.id === placeId);
+    if (!files.length || !place) return;
+    const st = document.getElementById('spot-upload-status'), added = [];
+    for (let n = 0; n < files.length; n++) {
+      if (st) { st.classList.remove('hidden'); st.textContent = `Uploading photo ${n + 1} of ${files.length}…`; }
+      let url = await uploadImageToFirebase(files[n], 'spot_photos');
+      if (!url) url = await new Promise(res => scaleImage(files[n], 800, res));
+      added.push(url);
     }
+    place.gallery = [...added, ...(place.gallery || [])];
+    saveAppData(); openSpotDetailView(place, true); renderSummaryPage();
   };
   input.click();
 }
@@ -982,20 +1398,19 @@ function renderMasterPlacesList() {
   if (!container) return;
   const trip = getActiveTrip();
   
-  const currentCity = getActiveHotelCity(trip) || "bandung";
-  const cityName = currentCity.charAt(0).toUpperCase() + currentCity.slice(1);
+  const cities = tripCities(trip), info = currentCityInfo(trip), city = info.city;
   const q = (document.getElementById('masterSearchInput')?.value || '').trim().toLowerCase();
+  renderCityChips(cities, city);
 
+  // only the city you are in; hide accidental duplicates (same name in same city)
   const seen = new Set();
-  const pool = (trip.places || []).filter(p => spotsAllCities || (p.city || currentCity).toLowerCase() === currentCity.toLowerCase()).filter(p => {
-    const k = (p.name || '').trim().toLowerCase() + '|' + (p.city || '').toLowerCase();
+  const pool = (trip.places || []).filter(p => placeCity(p).toLowerCase() === city.toLowerCase()).filter(p => {
+    const k = (p.name || '').trim().toLowerCase();
     if (seen.has(k)) return false; seen.add(k); return true;
   });
 
   const note = document.getElementById('spots-city-note');
-  if (note) {
-    note.innerHTML = `${spotsAllCities ? 'All Cities' : cityName + ' Spots'} • <button onclick="toggleSpotsAllCities()" class="underline font-semibold">${spotsAllCities ? 'Show ' + cityName + ' Only' : 'Show All Cities'}</button>${userLoc.live ? ' • Nearest first' : ''}`;
-  }
+  if (note) note.innerHTML = city ? `Showing <b>${escapeHtml(city)}</b>${info.src ? ' (from ' + info.src + ')' : ''}${userLoc.live ? ' • nearest first' : ''}` : 'No spots yet. Tap + to add your first one and choose its city.';
 
   const cats = ['ALL', ...new Set(pool.map(p => p.category || 'Other'))];
   if (!cats.includes(masterCat)) masterCat = 'ALL';
@@ -1018,7 +1433,7 @@ function renderMasterPlacesList() {
 
   container.innerHTML = '';
   if (list.length === 0) { 
-    container.innerHTML = `<p class="text-xs text-stone-400 text-center py-8 col-span-full">No spots found in ${cityName}. Tap <b>+</b> to add a spot in a new or existing city!</p>`; 
+    container.innerHTML = `<p class="text-xs text-stone-400 text-center py-8 col-span-full">No spots found${city ? ' in ' + escapeHtml(city) : ''}. Tap <b>+</b> to add a spot in a new or existing city!</p>`; 
     return; 
   }
   
@@ -1031,7 +1446,7 @@ function renderMasterPlacesList() {
     card.innerHTML = `
       <div class="w-20 h-20 rounded-2xl flex-shrink-0 overflow-hidden flex items-center justify-center text-3xl" style="background: linear-gradient(160deg,#E3E2B0,#C4BA65);">${img ? `<img src="${img}" class="w-full h-full object-cover">` : (SPOT_EMOJI[p.category] || '📍')}</div>
       <div class="min-w-0 flex-1 space-y-0.5">
-        <p class="text-[10px] font-extrabold uppercase tracking-wide" style="color: var(--muted-teal);">${escapeHtml(p.category || 'Spot')} • ${escapeHtml(p.city || cityName)}</p>
+        <p class="text-[10px] font-extrabold uppercase tracking-wide" style="color: var(--muted-teal);">${escapeHtml(p.category || 'Spot')} • ${escapeHtml(p.city || city)}</p>
         <h4 class="font-extrabold text-sm leading-snug" style="color: var(--dark-green);">${escapeHtml(p.name)}</h4>
         <p class="text-[11px] text-stone-500 truncate"><i class="fa-solid ${hasSt ? 'fa-train-subway' : 'fa-person-walking'} me-1"></i>${escapeHtml(hasSt ? p.station : (p.walk || 'No station nearby'))}</p>
         ${d !== null ? `<p class="text-[11px] font-semibold" style="color: var(--muted-teal);"><i class="fa-solid fa-location-arrow me-1"></i>${d.toFixed(1)} km • ~${Math.round(d * 1000 / WALK_M_PER_MIN)} min walk</p>` : ''}
@@ -1093,7 +1508,7 @@ function resolveCoord(trip, a) {
 }
 
 function openDocById(id) {
-  const d = getActiveTrip().checklists.packing.find(i => i.id === id);
+  const d = [getActiveTrip(), ...(appData.trips || [])].map(t => t && t.checklists && t.checklists.packing.find(i => i.id === id)).find(Boolean);
   const ph = d && docPhoto(d);
   if (ph) openImageViewer(ph);
   else { switchDashboardPage('checklists'); selectPackingCategory('documents'); }
@@ -1106,7 +1521,7 @@ function renderItinerary() {
   const total = getTotalTripDays(trip);
   if (activeItineraryDay > total) activeItineraryDay = 1;
   const sub = document.getElementById('itin-subtitle');
-  if (sub) sub.innerText = `${trip.name} • ${total} days`;
+  if (sub) sub.innerText = `${trip.name} • ${total} days • times are local (${tzShort(tzOf(trip))}, ${tzDiffLabel(tzOf(trip))})`;
 
   strip.innerHTML = "";
   for (let d = 1; d <= total; d++) {
@@ -1116,6 +1531,8 @@ function renderItinerary() {
     if (on) b.style.backgroundColor = 'var(--midnight-blue)';
     b.innerHTML = `<span class="block text-[10px] font-semibold">${p.wd}</span><span class="block text-lg font-extrabold leading-tight">${p.dd}</span><span class="block text-[9px] opacity-70">Day ${d}</span>${(() => { const w = weatherFor(trip, d); return w ? `<span class="block text-[10px] mt-0.5">${wxIcon(w.code)}${w.max}°</span>` : ''; })()}`;
     if (d === tripTodayIndex(trip)) b.style.boxShadow = '0 0 0 2px var(--carnival-red)';
+    const pst = dayStats(trip, d);
+    b.insertAdjacentHTML('beforeend', `<span class="block h-1 rounded-full mt-1 mx-2" style="background:${PACE[pst.pace].c}; box-shadow: 0 0 0 1px rgba(255,255,255,.55);"></span>`);
     b.onclick = () => { activeItineraryDay = d; renderItinerary(); };
     strip.appendChild(b);
   }
@@ -1125,35 +1542,58 @@ function renderItinerary() {
   const pts = acts.map(({ a }) => { const c = resolveCoord(trip, a); return c ? { lat: c.lat, lng: c.lng, label: a.title, kind: 'stop' } : null; }).filter(Boolean);
   renderMiniMap('itin-map', pts, { route: true, empty: 'Pin activities to a spot or your hotel to see the day on the map' });
 
-  const head = `<p class="font-bold text-sm mb-3" style="color: var(--midnight-blue);">${dayParts(trip, activeItineraryDay).full || 'Day ' + activeItineraryDay}</p>`;
+  const dayFull = dayParts(trip, activeItineraryDay).full || 'Day ' + activeItineraryDay;
+  const cen = pts[0] || tripCenter(trip);
+  let sun = null;
+  try { if (cen && trip.startDate) sun = sunTimes(cen.lat, cen.lng, tripDayIso(trip, activeItineraryDay), tzOf(trip)); } catch (e) {}
+  const st = dayStats(trip, activeItineraryDay), pc = PACE[st.pace];
+  const head = `<div class="mb-3 space-y-1.5"><p class="font-bold text-sm" style="color: var(--midnight-blue);">${dayFull}</p>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-stone-500">
+      <span class="px-2 py-0.5 rounded-full font-bold" style="background:${pc.c};color:${pc.t};">${pc.l}</span>
+      <span>${st.n} activit${st.n === 1 ? 'y' : 'ies'}</span>${st.km ? `<span>≈ ${st.km.toFixed(1)} km</span>` : ''}
+      ${sun ? `<span>🌅 ${fmtMin(sun.rise)}</span><span>🌇 ${fmtMin(sun.set)}</span><span>📸 golden hour ${fmtMin(sun.set - 60)}</span>` : ''}</div></div>`;
   if (acts.length === 0) { box.innerHTML = head + `<p class="text-xs text-stone-400 py-6 text-center">Nothing planned yet. Tap + Add Activity.</p>`; return; }
-  box.innerHTML = head + acts.map(({ a, i }) => {
+  const conn = idx => {
+    const cur = acts[idx], nxt = acts[idx + 1];
+    if (!nxt) return '';
+    const c1 = resolveCoord(trip, cur.a), c2 = resolveCoord(trip, nxt.a);
+    if (!c1 || !c2) return '';
+    const km = calculateDistanceInKm(c1.lat, c1.lng, c2.lat, c2.lng), mins = travelMins(km), walk = km <= 1.2;
+    const g1 = timeToMin(cur.a.time), g2 = timeToMin(nxt.a.time), tight = g1 !== null && g2 !== null && (g2 - g1) < mins + 30;
+    return `<div class="flex gap-2"><div class="w-12 flex-shrink-0"></div><div class="ms-1.5 pl-5 pb-3 border-l-2 border-dashed" style="border-color: rgba(138,140,65,.4);"><span class="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full" style="${tight ? 'background:#fdecec;color:var(--carnival-red);' : 'background:var(--beige);color:var(--muted-teal);'}"><i class="fa-solid ${walk ? 'fa-person-walking' : 'fa-car-side'}"></i>≈ ${mins} min ${walk ? 'walk' : 'by car'} • ${km.toFixed(1)} km${tight ? ' • ⚠ tight: starts only ' + (g2 - g1) + ' min apart' : ''}</span></div></div>`;
+  };
+  box.innerHTML = head + acts.map(({ a, i }, idx) => {
     const doc = a.docId && trip.checklists.packing.find(x => x.id === a.docId);
+    const am = timeToMin(a.time), cc = resolveCoord(trip, a);
+    const dark = sun && cc && cc.category === 'Attraction' && am !== null && (am >= sun.set - 15 || am < sun.rise)
+      ? `<p class="text-[11px] font-semibold" style="color: var(--carnival-red);">${am < sun.rise ? '☀️ Sunrise is at ' + fmtMin(sun.rise) : '🌙 Sunset is at ' + fmtMin(sun.set) + '. This will be after dark.'}</p>` : '';
     return `
     <div class="flex gap-2">
       <div class="w-12 text-right text-[11px] font-bold text-stone-400 pt-3.5 flex-shrink-0">${a.time || '—'}</div>
       <div class="relative pl-5 pb-4 flex-1 min-w-0 border-l-2 border-dashed ms-1.5" style="border-color: rgba(138,140,65,.4);">
-        <span class="absolute -left-[7px] top-4 w-3 h-3 rounded-full bg-white border-2" style="border-color: var(--muted-teal);"></span>
+        <button onclick="toggleActivityDone(${i})" aria-label="Mark as done" class="absolute -left-[9px] top-3.5 w-4 h-4 rounded-full border-2 flex items-center justify-center text-[8px] font-bold text-white" style="border-color: var(--muted-teal); background: ${a.done ? 'var(--muted-teal)' : '#fff'};">${a.done ? '✓' : ''}</button>
         <div class="lily-card p-3.5 bg-white space-y-1.5">
           <div class="flex justify-between items-start gap-2">
             <div class="min-w-0">
-              <p class="font-bold text-sm text-stone-800">${a.title}</p>
-              ${a.location ? `<p class="text-[11px] text-stone-500 mt-0.5"><i class="fa-solid fa-location-dot me-1 text-rose-600"></i>${a.location}</p>` : ''}
+              <p class="font-bold text-sm ${a.done ? 'line-through text-stone-400' : 'text-stone-800'}">${escapeHtml(a.title)}</p>
+              ${a.location ? `<p class="text-[11px] text-stone-500 mt-0.5"><i class="fa-solid fa-location-dot me-1 text-rose-600"></i>${escapeHtml(a.location)}</p>` : ''}
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
+              <button onclick="openDriverForActivity('${trip.id}', ${i})" aria-label="Show to driver" class="text-stone-300 hover:text-stone-600"><i class="fa-solid fa-taxi text-[11px]"></i></button>
               <button onclick="toggleStarItineraryActivity(${i})">${a.starred ? '<span class="text-amber-500">★</span>' : '<span class="text-stone-300">☆</span>'}</button>
               <button onclick="openEditItineraryModal(${i})" class="text-stone-300 hover:text-stone-600"><i class="fa-solid fa-pen text-[10px]"></i></button>
               <button onclick="deleteItineraryActivity(${i})" class="text-stone-300 hover:text-red-500"><i class="fa-solid fa-trash text-[10px]"></i></button>
             </div>
           </div>
-          ${a.notes ? `<p class="text-[11px] text-stone-400">${a.notes}</p>` : ''}
+          ${dark}
+          ${a.notes ? `<p class="text-[11px] text-stone-400">${escapeHtml(a.notes)}</p>` : ''}
           ${doc ? `<button onclick="openDocById('${doc.id}')" class="w-full flex items-center gap-2 rounded-xl p-2 text-left" style="background: var(--beige);">
             ${docPhoto(doc) ? `<img src="${docPhoto(doc)}" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">` : '<i class="fa-solid fa-ticket text-stone-500 px-2"></i>'}
-            <span class="text-[11px] font-semibold flex-1 truncate" style="color: var(--midnight-blue);">${doc.text}</span>
+            <span class="text-[11px] font-semibold flex-1 truncate" style="color: var(--midnight-blue);">${escapeHtml(doc.text)}</span>
             <span class="text-[10px] font-bold" style="color: var(--muted-teal);">View</span></button>` : ''}
         </div>
       </div>
-    </div>`;
+    </div>${conn(idx)}`;
   }).join('');
 }
 
@@ -1262,18 +1702,19 @@ function saveItineraryForm() {
     let docId = document.getElementById('itin-form-doc').value || null;
     if (data) {
       docId = 'd_' + Date.now();
-      savePhotoDoc(docId, data);
-      trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, shared: true, photoRef: docId });
+      if (String(data).startsWith('http')) trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, shared: true, fileData: data });
+      else { savePhotoDoc(docId, data); trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, shared: true, photoRef: docId }); }
     }
     const act = { day: activeItineraryDay, title: v('title'), time: v('time'), location: v('location'), notes: v('notes'),
       starred: false, placeId: (document.getElementById('itin-form-place').value || null), docId };
     if (editingItineraryIndex !== null && trip.itinerary[editingItineraryIndex]) {
       act.starred = trip.itinerary[editingItineraryIndex].starred || false;
+      act.done = trip.itinerary[editingItineraryIndex].done || false;
       trip.itinerary[editingItineraryIndex] = act;
     } else trip.itinerary.push(act);
     saveAppData(); closeModal('modal-itinerary'); renderItinerary(); renderSummaryPage();
   };
-  if (file) scaleImage(file, 1100, finish); else finish(null);
+  if (file) uploadImageToFirebase(file, 'tickets').then(url => { if (url) finish(url); else scaleImage(file, 1100, finish); }); else finish(null);
 }
 
 function deleteItineraryActivity(realIdx) {
@@ -1393,7 +1834,8 @@ function savePackingItemForm() {
     let photo = newData || it.fileData || null;
     if (!photo && it.photoRef) photo = await fetchPhotoNow(it.photoRef);
     if (shared) {
-      if (photo) { savePhotoDoc(it.id, photo); it.photoRef = it.id; delete it.fileData; }
+      if (photo && String(photo).startsWith('http')) { if (it.photoRef) { deletePhotoDoc(it.photoRef); delete it.photoRef; } it.fileData = photo; }
+      else if (photo) { savePhotoDoc(it.id, photo); it.photoRef = it.id; delete it.fileData; }
     } else {
       if (it.photoRef) { deletePhotoDoc(it.photoRef); delete it.photoRef; }
       it.fileData = photo || null;
@@ -1403,10 +1845,9 @@ function savePackingItemForm() {
   };
   
   if (category === 'documents' && file) {
-    uploadImageToFirebase(file, "documents").then(url => {
-      if (url) finish(url);
-      else scaleImage(file, 1100, finish);
-    });
+    if (shared) {   // only shared photos go to the cloud; private ones never leave this phone
+      uploadImageToFirebase(file, "documents").then(url => { if (url) finish(url); else scaleImage(file, 1100, finish); });
+    } else scaleImage(file, 1100, finish);
   } else finish(null);
 }
 
@@ -1931,6 +2372,7 @@ function openTripModal(tripIdToEdit = null) {
     document.getElementById('trip-form-people').value = trip.people || '';
     document.getElementById('trip-form-budget').value = trip.budget || '';
     setTripCurrencyField(tripCur(trip));
+    setTripTzField(tripTz(trip));
   } else {
     document.getElementById('modal-trip-title').innerText = "Add New Trip";
     document.getElementById('trip-form-id').value = '';
@@ -1940,6 +2382,7 @@ function openTripModal(tripIdToEdit = null) {
     document.getElementById('trip-form-people').value = '';
     document.getElementById('trip-form-budget').value = '';
     setTripCurrencyField('MYR');
+    setTripTzField('Asia/Jakarta');
   }
   document.getElementById('trip-form-cover').value = '';
   document.getElementById('trip-delete-btn')?.classList.toggle('hidden', !(tripIdToEdit && trip));
@@ -1974,6 +2417,7 @@ function saveTripFormCore() {
       const oldCur = tripCur(trip);
       (trip.expenses || []).forEach(e => { if (!e.currency) { e.currency = oldCur; e.rate = 1; e.rateCur = oldCur; } });
       trip.currency = document.getElementById('trip-form-currency').value || 'MYR';
+      trip.tz = document.getElementById('trip-form-tz').value || 'Asia/Jakarta';
       if (pendingCover) trip.coverImage = pendingCover;
     }
   } else {
@@ -1987,10 +2431,11 @@ function saveTripFormCore() {
       people: document.getElementById('trip-form-people').value || "1 Pax",
       budget: document.getElementById('trip-form-budget').value || "RM 0",
       currency: document.getElementById('trip-form-currency').value || 'MYR',
-      activeHotel: "The Papandayan Hotel",
-      hotelCity: "bandung",
-      hotelStation: "Bandung Station (23 min walk)",
-      places: typeof getAllMasterLocations === 'function' ? getAllMasterLocations() : [],
+      tz: document.getElementById('trip-form-tz').value || 'Asia/Jakarta',
+      activeHotel: "",
+      hotelCity: "",
+      hotelStation: "",
+      places: seedPlacesFor(title),
       itinerary: [],
       checklists: { packing: [] },
       expenses: [],
@@ -2007,11 +2452,13 @@ function saveTripFormCore() {
 
 function fillSpotForm(p) {
   const set = (k, v) => { document.getElementById('spot-form-' + k).value = v; };
-  set('id', p.id || ''); set('name', p.name || ''); set('city', p.city || 'Bandung'); set('category', p.category || 'Attraction');
+  set('id', p.id || ''); set('name', p.name || ''); set('city', p.city || currentCity(getActiveTrip()) || '');
+  const dl = document.getElementById('spot-city-list'); if (dl) dl.innerHTML = tripCities(getActiveTrip()).map(c => `<option value="${escapeHtml(c)}">`).join(''); set('category', p.category || 'Attraction');
   set('station', p.station || ''); set('walk', p.walk || ''); set('lat', p.lat || ''); set('lng', p.lng || '');
 }
-function openMasterSpotModal() {
+function openMasterSpotModal(newCity) {
   editingPlaceId = null; fillSpotForm({});
+  if (newCity === true) document.getElementById('spot-form-city').value = '';
   document.getElementById('modal-spot-title').innerText = "Add Location Spot";
   openModal('modal-master-spot');
 }
@@ -2023,25 +2470,85 @@ function openEditSpotModal(placeId) {
   openModal('modal-master-spot');
 }
 
+function parseCoordsText(t) {
+  t = String(t || '').trim();
+  if (!t) return null;
+  const m = t.match(/@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/) || t.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/)
+    || t.match(/[?&](?:q|query|ll|destination|center)=(-?\d+(?:\.\d+)?)(?:,|%2C)\s*(-?\d+(?:\.\d+)?)/i) || t.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  const lat = +m[1], lng = +m[2];
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
 function getSpotCoords() {
-  let a = document.getElementById('spot-form-lat').value.trim(), b = document.getElementById('spot-form-lng').value.trim();
-  if (a.includes(',') && !b) [a, b] = a.split(',').map(s => s.trim());
+  const a = document.getElementById('spot-form-lat').value.trim(), b = document.getElementById('spot-form-lng').value.trim();
+  if (a && !b) { const p = parseCoordsText(a); if (p) return p; }
   const lat = parseFloat(a), lng = parseFloat(b);
   return isNaN(lat) || isNaN(lng) ? null : { lat, lng };
 }
-
-async function findSpotCoords() {
-  const name = document.getElementById('spot-form-name').value.trim(), city = document.getElementById('spot-form-city').value;
-  if (!name) return alert("Enter the spot name first.");
-  const tip = "Paste the coordinates from Google Maps instead (long-press the spot, tap the numbers).";
-  try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(name + ', ' + city + ', Indonesia')}`);
-    const j = await r.json();
-    if (!j[0]) return alert("Couldn't find that place. " + tip);
-    document.getElementById('spot-form-lat').value = (+j[0].lat).toFixed(6);
-    document.getElementById('spot-form-lng').value = (+j[0].lon).toFixed(6);
-  } catch (e) { alert("Couldn't reach the map service. " + tip); }
+function geoMsg(t) { const m = document.getElementById('spot-geo-msg'); if (m) m.textContent = t || ''; }
+function setSpotCoords(lat, lng) { document.getElementById('spot-form-lat').value = (+lat).toFixed(6); document.getElementById('spot-form-lng').value = (+lng).toFixed(6); }
+function normalizeSpotCoords() {
+  const a = document.getElementById('spot-form-lat').value.trim();
+  if (!a || document.getElementById('spot-form-lng').value.trim()) return;
+  const p = parseCoordsText(a);
+  if (p) { setSpotCoords(p.lat, p.lng); geoMsg('Coordinates read from what you pasted ✓'); }
+  else if (/^https?:/i.test(a)) geoMsg(/goo\.gl|maps\.app/i.test(a) ? "Short links don't contain the position. Open the link in Maps, then copy the long address or the numbers." : "Couldn't find coordinates in that link. Try the long Google Maps link, or paste the numbers.");
 }
+async function geoSearch(q) {
+  const out = []; let err = '';
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(q)}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    (await r.json()).forEach(x => out.push({ name: x.name || String(x.display_name).split(',')[0], sub: x.display_name, lat: +x.lat, lng: +x.lon }));
+  } catch (e) { err = 'OpenStreetMap: ' + e.message; }
+  if (!out.length) {
+    try {
+      const r = await fetch(`https://photon.komoot.io/api/?limit=5&q=${encodeURIComponent(q)}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      ((await r.json()).features || []).forEach(f => { const p = f.properties || {}; out.push({ name: p.name || q, sub: [p.street, p.city || p.county, p.state, p.country].filter(Boolean).join(', '), lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }); });
+    } catch (e) { err += (err ? ' | ' : '') + 'Photon: ' + e.message; }
+  }
+  return { out, err };
+}
+function findSpotCoords() {
+  const name = document.getElementById('spot-form-name').value.trim(), city = (document.getElementById('spot-form-city').value || '').trim();
+  const box = document.getElementById('spot-geo-results');
+  if (box) box.innerHTML = '';
+  if (!name) return geoMsg('Type the spot name first.');
+  geoMsg('Searching…');
+  return (async () => {
+    let r = await geoSearch(city ? `${name}, ${city}` : name);
+    if (!r.out.length && city) r = await geoSearch(name);
+    if (!r.out.length) return geoMsg(r.err ? `Couldn't reach the map search (${r.err}). You can paste a Google Maps link into Latitude, or tap "I'm here now".` : 'No match. Try a shorter name, or paste a Google Maps link into Latitude.');
+    geoMsg('Tap the right place:');
+    r.out.forEach(x => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'w-full text-left rounded-xl p-2.5 bg-stone-50 border border-stone-200';
+      const t = document.createElement('span'); t.className = 'block text-xs font-bold text-stone-800'; t.textContent = x.name;
+      const s = document.createElement('span'); s.className = 'block text-[10px] text-stone-500 truncate'; s.textContent = x.sub;
+      b.append(t, s);
+      b.onclick = () => { setSpotCoords(x.lat, x.lng); geoMsg('Coordinates filled ✓'); box.innerHTML = ''; };
+      box.appendChild(b);
+    });
+  })();
+}
+function useHereForSpot() {
+  if (!navigator.geolocation) return geoMsg("This device can't share its location.");
+  geoMsg('Getting your position…');
+  navigator.geolocation.getCurrentPosition(p => { setSpotCoords(p.coords.latitude, p.coords.longitude); geoMsg("Filled with where you are right now ✓"); }, () => geoMsg('Location is off. Allow it in your browser, then try again.'), { enableHighAccuracy: true, timeout: 12000 });
+}
+function setSelectValue(id, v) { const s = document.getElementById(id); if (s) { s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); } }
+function fillFromAirportCode() {
+  const a = typeof findAirport === 'function' ? findAirport(document.getElementById('spot-form-code').value) : null;
+  if (!a) return geoMsg('No airport with that code in my list. Try CGK, KUL, SIN, HND… or use Find coordinates.');
+  document.getElementById('spot-form-name').value = `${a.name} (${a.code})`;
+  document.getElementById('spot-form-city').value = a.city;
+  setSelectValue('spot-form-category', 'Airport');
+  setSpotCoords(a.lat, a.lng);
+  geoMsg(`Filled in ${a.code} ✓ Save to add it to Spots.`);
+}
+document.addEventListener('change', e => { if (e.target && e.target.id === 'spot-form-lat') normalizeSpotCoords(); });
+
 
 function copySpotLine() {
   const f = k => document.getElementById('spot-form-' + k).value.trim(), c = getSpotCoords();
@@ -2054,9 +2561,12 @@ function copySpotLine() {
 
 function saveMasterSpotForm() {
   const f = k => document.getElementById('spot-form-' + k).value.trim();
-  const name = f('name'), city = f('city'), c = getSpotCoords();
+  const name = f('name'), c = getSpotCoords();
+  let city = f('city');
   if (!name) return alert("Enter spot name!");
+  if (!city) return alert("Enter the city (for example Bandung or Tokyo).");
   const trip = getActiveTrip();
+  city = tripCities(trip).find(x => x.toLowerCase() === city.toLowerCase()) || city;
   const station = f('station') || (c ? ((stationsNear(c.lat, c.lng, city.toLowerCase())[0] || {}).name || 'No station nearby') : 'Near Hotel Area');
   const map = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}`;
   if (editingPlaceId) {
@@ -2065,6 +2575,7 @@ function saveMasterSpotForm() {
   } else {
     trip.places.push({ id: "p_" + Date.now(), name, city, category: f('category'), station, walk: f('walk'), map, starred: false, gallery: [], lat: c ? c.lat : null, lng: c ? c.lng : null });
   }
+  try { localStorage.setItem('lily_spots_city_' + trip.id, JSON.stringify({ c: city, t: Date.now() })); } catch (e) {}
   saveAppData(); closeModal('modal-master-spot');
   renderLocationsPage(); renderWaddleView(); renderSummaryPage();
 }
@@ -2198,3 +2709,10 @@ function closeModal(id) { document.getElementById(id)?.classList.add('hidden'); 
     });
   });
 })();
+
+
+// ---- Instant launch: draw the "next 30 minutes" card from the saved copy before the cloud answers ----
+try { loadCachedAppData(); } catch (e) {}
+setInterval(() => { if (!document.hidden) renderNowCard(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) renderNowCard(); });
+try { navigator.permissions && navigator.permissions.query({ name: 'geolocation' }).then(r => { if (r.state === 'granted') ensureLocation(); }).catch(() => {}); } catch (e) {}
