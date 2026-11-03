@@ -1362,12 +1362,52 @@ function spotGalleryHtml(place) {
 }
 function toggleGalleryManage(id) { window._galleryManage = window._galleryManage === id ? null : id; const p = (getActiveTrip().places || []).find(x => x.id === id), b = document.getElementById('spot-gallery-box'); if (p && b) b.innerHTML = spotGalleryHtml(p); }
 function deleteGalleryPhoto(id, i) {
-  const p = (getActiveTrip().places || []).find(x => x.id === id);
-  if (!p || !p.gallery || !p.gallery[i] || !confirm("Delete this photo for everyone?")) return;
-  const url = p.gallery[i];
-  p.gallery.splice(i, 1);
-  try { if (storage && String(url).includes('firebasestorage')) storage.refFromURL(url).delete().catch(() => {}); } catch (e) {}
-  saveAppData(); openSpotDetailView(p, true);
+    const p = (getActiveTrip().places || []).find(x => x.id === id);
+    if (!p || !p.gallery || !p.gallery[i]) return;
+
+    showCustomConfirm("Delete this photo for everyone?", () => {
+        const url = p.gallery[i];
+        p.gallery.splice(i, 1);
+        try { if (storage && String(url).includes('firebasestorage')) storage.refFromURL(url).delete().catch(() => {}); } catch (e) {}
+        saveAppData();
+        openSpotDetailView(p, true);
+    });
+}
+
+function showCustomConfirm(message, onConfirm) {
+  const existing = document.getElementById('custom-confirm-modal');
+  if (existing) existing.remove();
+
+  const modalHTML = `
+    <div id="custom-confirm-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div class="bg-white rounded-3xl p-6 max-w-sm w-full mx-4 shadow-2xl border border-gray-100">
+        <div class="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-4 text-xl">
+          🗑️
+        </div>
+        <h3 class="text-lg font-bold text-[#253149] mb-1">Delete Photo</h3>
+        <p class="text-gray-600 text-sm mb-6">${message}</p>
+        <div class="flex space-x-3">
+          <button id="confirm-cancel" class="flex-1 px-4 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-colors">
+            Cancel
+          </button>
+          <button id="confirm-ok" class="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[#6253B0] hover:bg-[#52439c] rounded-2xl transition-colors shadow-md">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+  document.getElementById('confirm-cancel').onclick = () => {
+    document.getElementById('custom-confirm-modal').remove();
+  };
+  
+  document.getElementById('confirm-ok').onclick = () => {
+    document.getElementById('custom-confirm-modal').remove();
+    onConfirm();
+  };
 }
 function triggerSpotPhotoUpload(placeId) {
   const input = document.createElement('input');
