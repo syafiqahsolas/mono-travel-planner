@@ -1,6 +1,7 @@
 /* Lily Pond Travel Hub - offline support */
-const CACHE = 'lilypond-v1', TILES = 'lilypond-tiles-v1';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'transit_data.js', 'hotel_data.js', 'location.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'lilypond-v2', TILES = 'lilypond-tiles-v1';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'transit_data.js', 'airport_data.js', 'hotel_data.js', 'location.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const WAIT_MS = 1200;   // on a weak signal, use the saved copy after this long so the app still opens fast
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.allSettled(SHELL.map(u => c.add(u)))).then(() => self.skipWaiting()));
@@ -10,13 +11,27 @@ self.addEventListener('activate', e => {
 });
 
 async function trim(cache, max) { const ks = await cache.keys(); if (ks.length > max) await cache.delete(ks[0]); }
+const saved = req => caches.match(req, { ignoreSearch: true }).then(hit => hit || (req.mode === 'navigate' ? caches.match('index.html') : undefined));
+
+// Network first so your updates arrive, but never make the traveller wait: fall back to the saved copy after WAIT_MS.
+function networkFirst(req) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = r => { if (!done) { done = true; resolve(r); } };
+    const timer = setTimeout(async () => { const hit = await saved(req); if (hit) finish(hit); }, WAIT_MS);
+    fetch(req).then(r => {
+      if (r && (r.ok || r.type === 'opaque')) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
+      clearTimeout(timer); finish(r);
+    }).catch(async () => { clearTimeout(timer); finish((await saved(req)) || Response.error()); });
+  });
+}
 
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const host = new URL(req.url).hostname;
   // Live data is never cached by the worker (the app keeps its own copy)
-  if (host.endsWith('firestore.googleapis.com') || host.includes('open-meteo.com') || host.includes('nominatim')) return;
+  if (host.endsWith('firestore.googleapis.com') || host.includes('open-meteo.com') || host.includes('nominatim') || host.includes('photon.komoot') || host.includes('frankfurter')) return;
   // Map tiles: keep the ones you have already looked at
   if (host.endsWith('tile.openstreetmap.org')) {
     e.respondWith(caches.open(TILES).then(async c => {
@@ -26,9 +41,5 @@ self.addEventListener('fetch', e => {
     }));
     return;
   }
-  // Everything else: network first (so updates arrive), saved copy when offline
-  e.respondWith(fetch(req).then(r => {
-    if (r && (r.ok || r.type === 'opaque')) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
-    return r;
-  }).catch(() => caches.match(req, { ignoreSearch: true }).then(hit => hit || (req.mode === 'navigate' ? caches.match('index.html') : Response.error()))));
+  e.respondWith(networkFirst(req));
 });
