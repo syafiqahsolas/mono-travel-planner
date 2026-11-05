@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -34,6 +33,9 @@
           <span class="text-[10px] font-extrabold uppercase tracking-widest" style="color: var(--carnival-red);">Where Next? 🦆</span>
           <h1 style="color: var(--midnight-blue);" class="font-extrabold text-3xl leading-tight mt-1">Your Journey,<br><span style="color: var(--muted-teal);">Perfectly Planned.</span></h1>
         </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <button onclick="openTripModal()" aria-label="New trip" style="background-color: var(--midnight-blue);" class="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-md"><i class="fa-solid fa-plus text-sm"></i></button>
+        </div>
       </div>
       <div class="relative">
         <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 text-sm"></i>
@@ -65,6 +67,7 @@
       <div class="flex-1 min-w-0"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Install Waddl</p><p id="install-hint" class="text-[11px] text-stone-500">Add it to your home screen. It also works offline.</p></div>
       <button id="install-btn" onclick="installApp()" style="background-color: var(--midnight-blue);" class="px-3.5 py-2 rounded-xl text-xs font-bold text-white flex-shrink-0">Install</button>
     </div>
+    <button onclick="openTripModal()" class="w-full py-3.5 rounded-2xl text-sm font-bold border-2 border-dashed" style="border-color: var(--muted-teal); color: var(--midnight-blue); background: rgba(255,255,255,.6);"><i class="fa-solid fa-plus me-2"></i>Plan a new trip</button>
     <div class="text-center pt-2"><button onclick="openSyncModal()" class="text-[11px] font-semibold px-4 py-2 rounded-full bg-white border border-stone-200 text-stone-500"><i class="fa-solid fa-life-ring me-1"></i>Data &amp; backup</button></div>
   </section>
 
