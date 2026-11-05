@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Lily Pond">
+  <meta name="apple-mobile-web-app-title" content="Waddl">
   <title>Waddl Travel Hub</title>
   
   <!-- Tailwind CSS -->
@@ -64,13 +64,14 @@
       <div class="flex-1 min-w-0"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Install Waddl</p><p id="install-hint" class="text-[11px] text-stone-500">Add it to your home screen. It also works offline.</p></div>
       <button id="install-btn" onclick="installApp()" style="background-color: var(--midnight-blue);" class="px-3.5 py-2 rounded-xl text-xs font-bold text-white flex-shrink-0">Install</button>
     </div>
+    <div class="text-center pt-2"><button onclick="openSyncModal()" class="text-[11px] font-semibold px-4 py-2 rounded-full bg-white border border-stone-200 text-stone-500"><i class="fa-solid fa-life-ring me-1"></i>Data &amp; backup</button></div>
   </section>
 
 
   <!-- ================= SECTION 2: ACTIVE TRIP DASHBOARD ================= -->
   <section id="section-trip-dashboard" class="w-full max-w-7xl mx-auto p-4 md:p-8 space-y-4 hidden">
     <header class="trip-global-header flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/90 border border-stone-200/70 px-4 py-3 shadow-xs">
-      <div class="flex items-center gap-3"><span class="w-10 h-10 rounded-2xl flex items-center justify-center" style="background:var(--beige);color:var(--midnight-blue)"><i class="fa-solid fa-feather-pointed"></i></span><div><p class="text-[10px] uppercase tracking-widest font-extrabold" style="color:var(--muted-teal)">Lily Pond Travel Hub</p><p id="global-trip-name" class="font-extrabold text-sm" style="color:var(--midnight-blue)">Your trip</p></div></div>
+      <div class="flex items-center gap-3"><span class="w-10 h-10 rounded-2xl flex items-center justify-center" style="background:var(--beige);color:var(--midnight-blue)"><i class="fa-solid fa-feather-pointed"></i></span><div><p class="text-[10px] uppercase tracking-widest font-extrabold" style="color:var(--muted-teal)">Waddl Travel Hub</p><p id="global-trip-name" class="font-extrabold text-sm" style="color:var(--midnight-blue)">Your trip</p></div></div>
       <div class="flex items-center gap-2"><button onclick="openEmergency()" class="px-3 py-2 rounded-xl text-xs font-extrabold text-white" style="background-color: var(--carnival-red);">🆘 SOS</button><button onclick="openHomePage('upcoming')" class="px-4 py-2 rounded-xl text-xs font-bold border border-stone-200 bg-white hover:bg-stone-50" style="color:var(--midnight-blue)"><i class="fa-solid fa-house me-2"></i>Main page</button></div>
     </header>
     
@@ -149,6 +150,27 @@
   </div>
 </div>
 
+<!-- Quick price converter -->
+<div id="converter-card" class="lily-card p-4 space-y-3 bg-white">
+  <div class="flex items-center justify-between">
+    <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">💱 Quick converter</h3>
+    <button onclick="swapConverter()" aria-label="Swap currencies" class="w-9 h-9 rounded-full bg-stone-100 text-stone-600"><i class="fa-solid fa-right-left"></i></button>
+  </div>
+  <div class="grid grid-cols-[1fr_8.5rem] gap-2">
+    <input type="text" id="conv-amount" inputmode="decimal" oninput="runConverter()" placeholder="e.g. 45000 or 45k" style="font-size:16px" class="w-full min-w-0 bg-stone-50 border border-stone-200 rounded-2xl px-3 py-2.5 text-stone-800 font-semibold">
+    <select id="conv-from" onchange="runConverter()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select>
+  </div>
+  <div class="grid grid-cols-[1fr_8.5rem] gap-2 items-center">
+    <p class="text-xs text-stone-500 ps-1">is how much in</p>
+    <select id="conv-to" onchange="runConverter()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select>
+  </div>
+  <div class="rounded-2xl p-3" style="background: var(--beige);">
+    <p id="conv-result" class="text-xl font-extrabold leading-snug break-words" style="color: var(--midnight-blue);">—</p>
+    <p id="conv-note" class="text-[11px] text-stone-500 mt-0.5">Type a price to convert it.</p>
+  </div>
+  <button onclick="convToExpense()" class="w-full py-2.5 rounded-xl text-xs font-bold bg-stone-100 text-stone-700"><i class="fa-solid fa-receipt me-1"></i>Add this as an expense</button>
+</div>
+
 <!-- Trip memory card (appears once the trip starts) -->
 <div id="post-travel-card" class="lily-card p-5 space-y-3 hidden" style="background: linear-gradient(160deg, #F1ECD3, #E3E2B0);">
   <div class="flex items-center justify-between"><span class="text-[10px] font-extrabold uppercase tracking-widest" style="color: var(--midnight-blue);">📸 Trip memory card</span><span class="text-xl">🏆</span></div>
@@ -167,9 +189,12 @@
 
     <!-- PAGE B: ITINERARY (day strip + route map + timeline) -->
     <div id="page-itinerary" class="space-y-4 hidden">
-      <div>
-        <h2 style="color: var(--midnight-blue);" class="font-extrabold text-xl">Itinerary 🦆</h2>
-        <p id="itin-subtitle" class="text-xs text-stone-500"></p>
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <h2 style="color: var(--midnight-blue);" class="font-extrabold text-xl">Itinerary 🦆</h2>
+          <p id="itin-subtitle" class="text-xs text-stone-500"></p>
+        </div>
+        <button onclick="openSharePlan()" class="flex-shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-sm" style="background-color: var(--muted-teal);"><i class="fa-solid fa-share-nodes me-1"></i>Share plan</button>
       </div>
       <div id="itin-day-strip" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
       <div id="itin-map" class="rounded-3xl overflow-hidden shadow-sm"></div>
@@ -584,6 +609,42 @@
     </div>
   </div>
 
+  <!-- Sync status -->
+  <button id="sync-pill" onclick="openSyncModal()" class="hidden"></button>
+  <div id="modal-sync" class="hidden fixed inset-0 z-[75] flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">☁ Data &amp; backup</h3>
+        <button onclick="closeModal('modal-sync')" class="text-stone-400 hover:text-stone-600" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <p id="sync-status-text" class="text-xs text-stone-700 leading-relaxed"></p>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="retrySync()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-rotate me-1"></i>Save now</button>
+        <button onclick="exportBackup()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-download me-1"></i>Download backup</button>
+      </div>
+      <button onclick="pickBackupFile()" class="w-full py-2.5 rounded-xl text-xs font-bold bg-stone-100 text-stone-700"><i class="fa-solid fa-upload me-1"></i>Restore from a backup file</button>
+      <input type="file" id="sync-restore-file" accept="application/json,.json" class="hidden" onchange="onBackupChosen(this)">
+      <div id="sync-restore-confirm" class="hidden rounded-2xl p-3 space-y-2" style="background: #fdecec;">
+        <p class="text-xs font-bold" style="color: var(--carnival-red);">Replace everything with this backup?</p>
+        <p id="sync-restore-info" class="text-[11px] text-stone-700"></p>
+        <div class="flex gap-2 justify-end"><button onclick="document.getElementById('sync-restore-confirm').classList.add('hidden')" class="px-3 py-2 rounded-xl text-xs bg-white text-stone-600">Cancel</button><button onclick="confirmRestore()" class="px-3 py-2 rounded-xl text-xs font-bold text-white" style="background: var(--carnival-red);">Replace</button></div>
+      </div>
+      <button id="sync-phone-backup" onclick="downloadSavedBackup()" class="hidden w-full py-2 rounded-xl text-[11px] font-semibold bg-stone-100 text-stone-600">Download the version that was on this phone before</button>
+      <p class="text-[10px] text-stone-400 leading-relaxed">Download a backup before clearing your browser data. Private checklist items are included in the backup file only.</p>
+    </div>
+  </div>
+  <div id="modal-version-choice" class="hidden fixed inset-0 z-[80] flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[92vh] overflow-y-auto">
+      <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Which version should we keep?</h3>
+      <p class="text-xs text-stone-600 leading-relaxed">This phone and the cloud have different versions of your trips. Nothing is lost either way: the one you don't pick is saved so you can download it.</p>
+      <div id="vc-body" class="space-y-2"></div>
+      <div class="grid grid-cols-1 gap-2 pt-1">
+        <button onclick="keepPhoneVersion()" class="py-3 rounded-2xl text-sm font-bold text-white" style="background: var(--midnight-blue);">Keep this phone's version</button>
+        <button onclick="useCloudVersion()" class="py-3 rounded-2xl text-sm font-bold bg-stone-100 text-stone-700">Use the cloud version</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Delete trip -->
   <div id="modal-delete-trip" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
     <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
@@ -596,6 +657,26 @@
         <button onclick="closeModal('modal-delete-trip')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Keep trip</button>
         <button onclick="deleteTripNow()" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white" style="background-color: var(--carnival-red);">Delete trip</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Share the plan -->
+  <div id="modal-share-plan" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-md p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Share the plan</h3>
+        <button onclick="closeModal('modal-share-plan')" class="text-stone-400 hover:text-stone-600" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <select id="plan-scope" onchange="refreshPlanText()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 text-sm font-medium"></select>
+      <label class="flex items-center gap-2 text-xs text-stone-600 cursor-pointer"><input type="checkbox" id="plan-links" onchange="refreshPlanText()" class="w-4 h-4 rounded"> Include map links</label>
+      <textarea id="plan-text" rows="12" style="font-size:13px" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-3 text-stone-800 font-mono leading-relaxed"></textarea>
+      <p id="plan-status" class="text-[11px] font-semibold" style="color: var(--muted-teal);"></p>
+      <div class="grid grid-cols-3 gap-2">
+        <button onclick="copyPlanText()" class="py-2.5 rounded-xl text-xs font-bold bg-stone-100 text-stone-700"><i class="fa-regular fa-copy me-1"></i>Copy</button>
+        <button onclick="whatsappPlan()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: #25a35a;"><i class="fa-brands fa-whatsapp me-1"></i>WhatsApp</button>
+        <button onclick="sharePlanText()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-share-nodes me-1"></i>Share</button>
+      </div>
+      <p class="text-[10px] text-stone-400">You can edit the text above before sending.</p>
     </div>
   </div>
 
