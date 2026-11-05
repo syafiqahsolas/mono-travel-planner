@@ -102,7 +102,7 @@ async function uploadImageToFirebase(file, folder = "user_uploads") {
     let body = file, type = file.type || 'image/jpeg';
     try { const b = await scaleToBlob(file, 1600, 0.82); if (b) { body = b; type = 'image/jpeg'; } } catch (e) {}
     const ref = storage.ref().child(`${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 7)}.jpg`);
-    const snap = await ref.put(body, { contentType: type });
+    const snap = await ref.put(body, { contentType: type, contentDisposition: 'attachment; filename="lily-pond-photo.jpg"' });   // so a tap on the link saves the photo
     return await snap.ref.getDownloadURL();
   } catch (err) {
     console.error("Firebase Storage Upload Error:", err);
@@ -160,16 +160,31 @@ function stationLabel(lat, lng, city) {
   const s = stationsNear(lat, lng, city)[0];
   return s ? `${s.name} (${s.mins} min walk)` : "No station within 30 min walk";
 }
-async function downloadViewerImage(e) {
-  const dl = document.getElementById('image-viewer-dl'), src = (dl && dl.dataset.src) || '';
-  if (!src || src.startsWith('data:')) return true;       // data photos: the link saves them directly
-  e.preventDefault(); e.stopPropagation();
+// One tap saves a photo: data photos directly; cloud photos via a blob (if CORS is set) or as a forced download
+async function downloadPhoto(src, name) {
+  if (String(src || '').startsWith('photo:')) src = await fetchPhotoNow(String(src).slice(6));
+  if (!src) return;
+  name = name || ('lily-pond-' + new Date().toISOString().slice(0, 10) + '.jpg');
+  const click = (href, useName) => { const a = document.createElement('a'); a.href = href; if (useName) a.download = name; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); };
+  if (String(src).startsWith('data:')) return click(src, true);
   try {
-    const b = await (await fetch(src)).blob(), a = document.createElement('a');
-    a.href = URL.createObjectURL(b); a.download = dl.getAttribute('download') || 'photo.jpg';
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  } catch (err) { window.open(src, '_blank'); alert('The photo opened in a new tab. Press and hold it to save.'); }
+    const r = await fetch(src); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const u = URL.createObjectURL(await r.blob()); click(u, true); setTimeout(() => URL.revokeObjectURL(u), 3000); return;
+  } catch (e) {}
+  try { if (storage && String(src).includes('firebasestorage')) await storage.refFromURL(src).updateMetadata({ contentDisposition: `attachment; filename="${name}"` }); } catch (e) {}
+  click(src + (src.includes('?') ? '&' : '?') + 'dl=' + Date.now(), false);
+}
+function downloadViewerImage(e) {
+  const dl = document.getElementById('image-viewer-dl');
+  e.preventDefault(); e.stopPropagation();
+  downloadPhoto((dl && dl.dataset.src) || '');
   return false;
+}
+function downloadGalleryPhoto(id, i) { const p = (getActiveTrip().places || []).find(x => x.id === id); if (p && p.gallery && p.gallery[i]) downloadPhoto(p.gallery[i], `lily-pond-${slugOf(p.name)}-${i + 1}.jpg`); }
+async function downloadAllGallery(id) {
+  const p = (getActiveTrip().places || []).find(x => x.id === id);
+  if (!p || !p.gallery) return;
+  for (let i = 0; i < p.gallery.length; i++) { await downloadPhoto(p.gallery[i], `lily-pond-${slugOf(p.name)}-${i + 1}.jpg`); await new Promise(r => setTimeout(r, 600)); }
 }
 function openImageViewer(src) {
   document.getElementById('image-viewer-img').src = src;
@@ -271,9 +286,11 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) window
 
 function loadCachedAppData() {
   try {
-    const saved = localStorage.getItem('lily_pond_image2_data');
-    if (!saved) return;
-    appData = JSON.parse(saved); hydrateDeviceChecklists();
+    const saved = localStorage.getItem(CACHE_KEY);
+    if (!saved) { hadCache = false; try { if (!localStorage.getItem(HASH_KEY)) baselineHashes(); } catch (e) {} return; }
+    hadCache = true;
+    appData = JSON.parse(saved); appData.deletedTrips = appData.deletedTrips || {}; hydrateDeviceChecklists();
+    const lt = localStorage.getItem(ACTIVE_KEY); if (lt && appData.trips.some(t => t.id === lt)) activeTripId = lt;
     renderNowCard(); renderHomeViews(); setTimeout(renderActiveTripDashboard, 0);
   } catch (e) { console.warn('No saved copy yet', e); }
 }
@@ -625,33 +642,37 @@ function hydrateDeviceChecklists() {
 }
 
 function listenToCloudChanges() {
-  const docRef = db.collection("travelHub").doc("sharedTripData");
-  docRef.onSnapshot((doc) => {
-    if (doc.exists) {
-      const prevTrip = activeTripId, viewing = !document.getElementById('section-trip-dashboard')?.classList.contains('hidden');
-      appData = doc.data();
-      hydrateDeviceChecklists();
-      if (appData.currentTripId) activeTripId = appData.currentTripId;
-      let trip = getActiveTrip();
-      if (trip && syncMasterLocations(trip)) saveAppData();
-
-      localStorage.setItem("lily_pond_image2_data", JSON.stringify(appData));
-      renderHomeViews();
-      renderNowCard();
-      renderActiveTripDashboard();
-      if (viewing && !(appData.trips || []).some(t => t.id === prevTrip)) openHomePage();
-    } else {
-      const trip = getActiveTrip();
-      if (trip && typeof getAllMasterLocations === 'function' && (!trip.places || trip.places.length === 0)) {
-        trip.places = getAllMasterLocations();
-      }
-      saveAppData();
+  const ref = db.collection("travelHub").doc("sharedTripData");
+  ref.onSnapshot({ includeMetadataChanges: true }, (doc) => {
+    const fromCache = !!(doc.metadata && doc.metadata.fromCache);
+    // "Not in the cache" is NOT "doesn't exist". Never write starter data because of it.
+    if (fromCache && !doc.exists) { if (!cloudReady) setSyncState(isDirty() ? 'waiting' : 'idle'); return; }
+    // A cached copy may be old: show it, but wait for the server before trusting or saving anything.
+    if (fromCache && !cloudReady) { if (!hadCache) { adoptShared(doc.data()); renderEverything(); } return; }
+    if (!doc.exists) {                                  // the server confirms there is nothing yet: create it
+      cloudReady = true; if (!hadCache) baselineHashes(); setDirty(true); return pushToCloud();
     }
+    const remote = doc.data(), key = contentKey(remote), first = !cloudReady;
+    cloudReady = true;
+    if (!first && key === lastRemoteKey && !isDirty()) return;       // metadata-only change
+    lastRemoteKey = key;
+    let haveBaseline = false; try { haveBaseline = !!localStorage.getItem(HASH_KEY); } catch (e) {}
+    if (first && hadCache && !haveBaseline && contentKey(shareableData()) !== key) return offerVersionChoice(shareableData(), remote);
+    if (isDirty()) {                                    // keep your unsaved edits, add what others changed
+      const local = shareableData(); stampChanges(local);
+      const merged = mergeShared(remote, local);
+      adoptShared(merged);
+      if (contentKey(merged) !== key) { scheduleCloudPush(0); } else { setDirty(false); setSyncState('saved'); }
+    } else adoptShared(remote);
+    if (first && !isDirty()) { const e0 = syncState; if (e0 !== 'error') setSyncState('idle'); }
+    const prevTrip = activeTripId, viewing = !document.getElementById('section-trip-dashboard')?.classList.contains('hidden');
+    let trip = getActiveTrip();
+    if (trip && syncMasterLocations(trip)) saveAppData();
+    renderEverything();
+    if (viewing && !(appData.trips || []).some(t => t.id === prevTrip)) openHomePage();
   }, (error) => {
-    const saved = localStorage.getItem("lily_pond_image2_data");
-    if (saved) { appData = JSON.parse(saved); hydrateDeviceChecklists(); }
-    renderHomeViews();
-    renderActiveTripDashboard();
+    setSyncState('error', 'Could not read from the cloud (' + ((error && (error.code || error.message)) || 'unknown') + '). Showing the copy saved on this phone. If this keeps happening, check your Firestore rules.');
+    renderEverything();
   });
 }
 
@@ -775,16 +796,258 @@ window.addEventListener('popstate', e => {
   } finally { _popping = false; }
 });
 
-function saveAppData() {
-  appData.currentTripId = activeTripId;
-  saveDeviceChecklists();
-  const sharedData = JSON.parse(JSON.stringify(appData));
-  (sharedData.trips || []).forEach(t => {
+// ================= DATA SAFETY =================
+// Every edit is saved on this phone first, then merged into the cloud copy. A cloud copy is never
+// overwritten by an older one, "not found in cache" is never treated as "empty", and failures are shown.
+const CACHE_KEY = 'lily_pond_image2_data', HASH_KEY = 'lily_sync_hashes', DIRTY_KEY = 'lily_cloud_dirty', ACTIVE_KEY = 'lily_active_trip', BACKUP_KEY = 'lily_backup_before_cloud';
+const MAX_DOC_BYTES = 950000;   // Firestore refuses documents over 1 MiB
+let cloudReady = false, hadCache = false, syncTimer = null, syncBusy = false, syncState = 'idle', syncMsg = '', lastSavedAt = 0, lastRemoteKey = '', _vc = null, _pendingRestore = null;
+const stable = o => Array.isArray(o) ? '[' + o.map(stable).join(',') + ']' : (o && typeof o === 'object') ? '{' + Object.keys(o).sort().map(k => JSON.stringify(k) + ':' + stable(o[k])).join(',') + '}' : JSON.stringify(o);
+const hashStr = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return String(h); };
+const isDirty = () => { try { return localStorage.getItem(DIRTY_KEY) === '1'; } catch (e) { return false; } };
+function setDirty(v) { try { if (v) localStorage.setItem(DIRTY_KEY, '1'); else localStorage.removeItem(DIRTY_KEY); } catch (e) {} }
+function contentKey(d) { return stable((d.trips || []).map(t => { const c = { ...t }; delete c._ts; return c; })); }
+
+// What goes to the cloud: everything except private checklist items (they stay on this phone)
+function shareableData() {
+  const d = JSON.parse(JSON.stringify(appData));
+  (d.trips || []).forEach(t => {
     t.sharedChecklist = ((t.checklists && t.checklists.packing) || []).filter(i => i.shared).map(i => { const c = { ...i }; if (!String(c.fileData || '').startsWith('http')) delete c.fileData; return c; });
     delete t.checklists;
   });
-  try { localStorage.setItem("lily_pond_image2_data", JSON.stringify(sharedData)); } catch (e) {}
-  db.collection("travelHub").doc("sharedTripData").set(sharedData).catch((err) => console.error("Cloud sync error:", err));
+  d.deletedTrips = appData.deletedTrips || {};
+  return d;
+}
+function baselineHashes() {
+  const h = {};
+  (shareableData().trips || []).forEach(t => { h[t.id] = {}; Object.keys(t).forEach(k => { if (k !== '_ts') h[t.id][k] = hashStr(stable(t[k])); }); });
+  try { localStorage.setItem(HASH_KEY, JSON.stringify(h)); } catch (e) {}
+}
+// Stamp the sections you changed since the last time we matched the cloud (no baseline = stamp nothing)
+function stampChanges(shared) {
+  let h = null; try { h = JSON.parse(localStorage.getItem(HASH_KEY) || 'null'); } catch (e) {}
+  if (!h) return;
+  const now = Date.now();
+  (shared.trips || []).forEach(t => {
+    const th = h[t.id], ts = t._ts || (t._ts = {});
+    Object.keys(t).forEach(k => { if (k !== '_ts' && (!th || th[k] !== hashStr(stable(t[k])))) ts[k] = now; });
+  });
+}
+// Combine two copies section by section; the most recent edit of each section wins, the cloud wins ties
+function mergeShared(remote, local) {
+  const dead = { ...(remote.deletedTrips || {}) };
+  Object.entries(local.deletedTrips || {}).forEach(([k, v]) => { dead[k] = Math.max(dead[k] || 0, v); });
+  Object.keys(dead).forEach(k => { if (Date.now() - dead[k] > 90 * 864e5) delete dead[k]; });
+  const out = { ...remote, ...local, deletedTrips: dead, trips: [] };
+  const ids = [];
+  [...(remote.trips || []), ...(local.trips || [])].forEach(t => { if (!ids.includes(t.id)) ids.push(t.id); });
+  ids.forEach(id => {
+    if (dead[id]) return;
+    const r = (remote.trips || []).find(t => t.id === id), l = (local.trips || []).find(t => t.id === id);
+    if (!r || !l) return out.trips.push(r || l);
+    const m = {}, ts = {};
+    new Set([...Object.keys(r), ...Object.keys(l)]).forEach(k => {
+      if (k === '_ts') return;
+      const tr = (r._ts || {})[k] || 0, tl = (l._ts || {})[k] || 0, useLocal = (k in l) && (tl > tr || !(k in r));
+      m[k] = useLocal ? l[k] : r[k]; ts[k] = useLocal ? tl : tr;
+    });
+    m._ts = ts; out.trips.push(m);
+  });
+  return out;
+}
+function adoptShared(shared) {
+  appData = JSON.parse(JSON.stringify(shared));
+  appData.deletedTrips = appData.deletedTrips || {};
+  hydrateDeviceChecklists();
+  const lt = (() => { try { return localStorage.getItem(ACTIVE_KEY); } catch (e) { return null; } })();
+  if (lt && appData.trips.some(t => t.id === lt)) activeTripId = lt;
+  else if (!appData.trips.some(t => t.id === activeTripId)) activeTripId = appData.trips[0] ? appData.trips[0].id : null;
+  baselineHashes();
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(shareableData())); } catch (e) {}
+}
+function renderEverything() { try { renderHomeViews(); renderNowCard(); renderActiveTripDashboard(); } catch (e) { console.warn(e); } }
+
+function saveAppData() {
+  appData.currentTripId = activeTripId;
+  try { localStorage.setItem(ACTIVE_KEY, activeTripId || ''); } catch (e) {}
+  saveDeviceChecklists();
+  const shared = shareableData();
+  stampChanges(shared);
+  (shared.trips || []).forEach(st => { const lt = (appData.trips || []).find(x => x.id === st.id); if (lt && st._ts) lt._ts = st._ts; });
+  shared.updatedAt = Date.now();
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(shared)); } catch (e) {}
+  setDirty(true);
+  scheduleCloudPush(400);
+}
+function scheduleCloudPush(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(pushToCloud, ms == null ? 400 : ms); if (cloudReady && navigator.onLine) setSyncState('saving'); }
+
+// Move any photos stored inside the trip data into their own cloud documents (each photo gets its own 1 MB)
+async function slimInlinePhotos() {
+  let moved = 0;
+  for (const t of (appData.trips || [])) for (const p of (t.places || [])) {
+    if (!Array.isArray(p.gallery) || !p.gallery.some(u => typeof u === 'string' && u.startsWith('data:'))) continue;
+    const out = [];
+    for (const u of p.gallery) {
+      if (typeof u === 'string' && u.startsWith('data:')) {
+        const id = 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+        try { await Promise.race([db.collection('travelHub').doc('photo_' + id).set({ data: u }), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000))]); _photoCache[id] = u; out.push('photo:' + id); moved++; }
+        catch (e) { out.push(u); }
+      } else out.push(u);
+    }
+    p.gallery = out;
+  }
+  return moved;
+}
+async function pushToCloud() {
+  if (syncBusy) return scheduleCloudPush(800);
+  if (!isDirty()) return;
+  if (_vc) return setSyncState('choice');
+  if (!cloudReady) return setSyncState('waiting');
+  if (!navigator.onLine) return setSyncState('offline');
+  syncBusy = true; setSyncState('saving');
+  try {
+    if (await slimInlinePhotos()) { saveDeviceChecklists(); }
+    const shared = shareableData(); stampChanges(shared);
+    (shared.trips || []).forEach(st => { const lt = (appData.trips || []).find(x => x.id === st.id); if (lt && st._ts) lt._ts = st._ts; });
+    const ref = db.collection('travelHub').doc('sharedTripData');
+    let merged = null;
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      merged = snap.exists ? mergeShared(snap.data(), shared) : shared;
+      merged.updatedAt = Date.now();
+      const size = new Blob([JSON.stringify(merged)]).size;
+      if (size > MAX_DOC_BYTES) throw Object.assign(new Error('too-large'), { code: 'too-large', size });
+      tx.set(ref, merged);
+    });
+    const changedByOthers = contentKey(merged) !== contentKey(shared);
+    adoptShared(merged); lastRemoteKey = contentKey(merged);
+    setDirty(false); lastSavedAt = Date.now(); setSyncState('saved');
+    if (changedByOthers) renderEverything();
+  } catch (e) { handleSyncError(e); }
+  finally { syncBusy = false; }
+}
+function handleSyncError(e) {
+  const code = (e && e.code) || '', raw = (e && e.message) || String(e);
+  let msg;
+  if (code === 'too-large') msg = `Your trip data is too big to save (${Math.round((e.size || 0) / 1024)} KB, the limit is about 950 KB). Photos kept inside it are usually the cause. Delete some photos or large items, then tap Retry.`;
+  else if (code === 'permission-denied') msg = "The cloud refused the save. In the Firebase console, open Firestore Database → Rules and allow read and write on the 'travelHub' collection (test-mode rules expire after 30 days).";
+  else if (['unavailable', 'aborted', 'deadline-exceeded', 'failed-precondition', 'cancelled'].includes(code) || !navigator.onLine) { setSyncState('offline', 'Waiting for a connection. Your changes are safe on this phone and will upload automatically.'); setTimeout(() => { if (isDirty()) scheduleCloudPush(0); }, 30000); return; }
+  else msg = 'Saving to the cloud failed: ' + raw;
+  setSyncState('error', msg);
+}
+function setSyncState(s, msg) {
+  syncState = s; if (msg !== undefined) syncMsg = msg;
+  const el = document.getElementById('sync-pill');
+  if (!el) return;
+  clearTimeout(window._pillTimer);
+  const base = 'fixed top-2 right-2 z-[70] px-3 py-1.5 rounded-full text-[11px] font-bold border shadow-sm ';
+  const set = (cls, txt, style) => { el.className = base + cls; el.textContent = txt; el.setAttribute('style', style || ''); };
+  if (s === 'saving') set('bg-white text-stone-600 border-stone-200', '☁ Saving…');
+  else if (s === 'saved') { set('bg-white text-stone-600 border-stone-200', '✓ Saved'); window._pillTimer = setTimeout(() => el.classList.add('hidden'), 1800); }
+  else if (s === 'offline') set('bg-amber-50 text-amber-800 border-amber-200', '📴 Will save when online');
+  else if (s === 'error') set('text-white border-transparent', '⚠ Not saved to cloud • tap', 'background: var(--carnival-red);');
+  else if (s === 'choice') set('text-white border-transparent', '⚠ Choose a version', 'background: var(--carnival-red);');
+  else el.classList.add('hidden');
+}
+window.addEventListener('online', () => { if (isDirty()) scheduleCloudPush(0); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && isDirty()) scheduleCloudPush(0); });
+setInterval(() => { if (isDirty() && !syncBusy && syncState !== 'error') scheduleCloudPush(0); }, 45000);
+
+// ---- Photos kept as separate documents are referenced as "photo:ID" ----
+function imgUrl(u, fallback) {
+  if (!String(u).startsWith('photo:')) return u;
+  const id = String(u).slice(6);
+  if (_photoCache[id]) return _photoCache[id];
+  if (!_photoLoading[id]) { _photoLoading[id] = true; fetchPhotoNow(id).then(d => { delete _photoLoading[id]; if (d) refreshPhotoViews(); }); }
+  return fallback === undefined ? PLACEHOLDER_IMG : fallback;
+}
+function refreshPhotoViews() {
+  try {
+    const d = document.getElementById('page-spot-detail');
+    if (d && !d.classList.contains('hidden') && window._openSpotId) { const p = (getActiveTrip().places || []).find(x => x.id === window._openSpotId); if (p) openSpotDetailView(p, true); }
+    else if (!document.getElementById('page-master')?.classList.contains('hidden')) renderMasterPlacesList();
+  } catch (e) {}
+}
+
+// ---- Backup & restore ----
+function loadDevicePacking() {
+  const out = {};
+  (appData.trips || []).forEach(t => { out[t.id] = ((t.checklists && t.checklists.packing) || []).filter(i => !i.shared); });
+  return out;
+}
+function exportBackup() {
+  const payload = { app: 'waddl', version: 1, exportedAt: new Date().toISOString(), shared: shareableData(), device: loadDevicePacking() };
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+  a.download = 'waddl-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+function downloadSavedBackup() {
+  try { const b = JSON.parse(localStorage.getItem(BACKUP_KEY) || 'null'); if (!b) return;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: 'waddl', version: 1, exportedAt: b.at, shared: b.data, device: {} })], { type: 'application/json' }));
+    a.download = 'waddl-phone-version-' + String(b.at).slice(0, 10) + '.json'; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+}
+function pickBackupFile() { document.getElementById('sync-restore-file').click(); }
+function onBackupChosen(input) {
+  const f = input.files && input.files[0]; input.value = '';
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const p = JSON.parse(r.result);
+      if (!p || !p.shared || !Array.isArray(p.shared.trips)) throw new Error('not a backup');
+      _pendingRestore = p;
+      document.getElementById('sync-restore-info').innerHTML = `<b>${p.shared.trips.length} trip${p.shared.trips.length === 1 ? '' : 's'}</b> from ${escapeHtml(String(p.exportedAt || '').slice(0, 10))}:<br>${summarizeShared(p.shared).map(escapeHtml).join('<br>')}`;
+      document.getElementById('sync-restore-confirm').classList.remove('hidden');
+    } catch (e) { alert("That file isn't a Waddl backup."); }
+  };
+  r.readAsText(f);
+}
+async function confirmRestore() {
+  const p = _pendingRestore; if (!p) return;
+  document.getElementById('sync-restore-confirm').classList.add('hidden');
+  const dead = { ...(appData.deletedTrips || {}), ...(p.shared.deletedTrips || {}) };
+  try { const snap = await db.collection('travelHub').doc('sharedTripData').get(); if (snap.exists) (snap.data().trips || []).forEach(t => { if (!p.shared.trips.some(x => x.id === t.id)) dead[t.id] = Date.now(); }); } catch (e) {}
+  p.shared.trips.forEach(t => delete dead[t.id]);
+  const now = Date.now();
+  p.shared.trips.forEach(t => { t._ts = t._ts || {}; Object.keys(t).forEach(k => { if (k !== '_ts') t._ts[k] = now; }); });
+  p.shared.deletedTrips = dead;
+  appData = JSON.parse(JSON.stringify(p.shared));
+  Object.entries(p.device || {}).forEach(([id, items]) => { try { localStorage.setItem(checklistStorageKey(id), JSON.stringify({ packing: items })); } catch (e) {} });
+  hydrateDeviceChecklists();
+  if (!appData.trips.some(t => t.id === activeTripId)) activeTripId = appData.trips[0] ? appData.trips[0].id : null;
+  _pendingRestore = null; saveAppData(); closeModal('modal-sync'); renderEverything();
+}
+function summarizeShared(d) { return (d.trips || []).map(t => `${t.name}: ${(t.itinerary || []).length} activities, ${(t.expenses || []).length} expenses, ${(t.places || []).length} spots`); }
+function openSyncModal() {
+  const states = { saved: lastSavedAt ? 'All changes are saved to the cloud. Last saved ' + new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '.' : 'Everything is up to date.', saving: 'Saving…', waiting: 'Checking what the cloud holds before saving…', offline: syncMsg || "You're offline. Changes are kept on this phone and will upload when you're back online.", error: syncMsg, choice: 'Choose which version to keep first.', idle: isDirty() ? 'Some changes have not reached the cloud yet.' : 'Everything is up to date.' };
+  document.getElementById('sync-status-text').textContent = states[syncState] || states.idle;
+  document.getElementById('sync-restore-confirm').classList.add('hidden');
+  document.getElementById('sync-phone-backup').classList.toggle('hidden', !localStorage.getItem(BACKUP_KEY));
+  openModal('modal-sync');
+}
+function retrySync() { setSyncState('saving'); scheduleCloudPush(0); closeModal('modal-sync'); }
+
+// ---- First run after an update: phone and cloud disagree ----
+function offerVersionChoice(local, remote) {
+  _vc = { local, remote };
+  const col = (title, d) => `<div class="rounded-2xl p-3 bg-stone-50 border border-stone-200"><p class="text-[10px] font-extrabold uppercase tracking-wider" style="color: var(--muted-teal);">${title}</p>${summarizeShared(d).map(l => `<p class="text-[11px] text-stone-700 mt-1">${escapeHtml(l)}</p>`).join('') || '<p class="text-[11px] text-stone-400 mt-1">No trips</p>'}</div>`;
+  document.getElementById('vc-body').innerHTML = col('📱 This phone', local) + col('☁ Cloud', remote);
+  setSyncState('choice'); openModal('modal-version-choice');
+}
+function keepPhoneVersion() {
+  const { local, remote } = _vc; _vc = null;
+  closeModal('modal-version-choice');
+  adoptShared(remote);                                 // the cloud becomes the baseline...
+  appData = JSON.parse(JSON.stringify(local)); appData.deletedTrips = appData.deletedTrips || {}; hydrateDeviceChecklists();
+  lastRemoteKey = contentKey(remote);
+  saveAppData();                                       // ...so everything that differs counts as your newer edit
+  renderEverything();
+}
+function useCloudVersion() {
+  const { local, remote } = _vc; _vc = null;
+  try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), data: local })); } catch (e) {}
+  closeModal('modal-version-choice');
+  adoptShared(remote); lastRemoteKey = contentKey(remote); setDirty(false); setSyncState('saved'); renderEverything();
 }
 
 function getActiveTrip() {
@@ -1025,6 +1288,7 @@ function tripStats(trip) {
     photos: (trip.places || []).reduce((n, p) => n + (p.gallery || []).length, 0), cities: tripCities(trip) };
 }
 function renderPostTravelInfographicCard(trip) {
+  try { initConverter(trip); } catch (e) {}
   const card = document.getElementById('post-travel-card');
   if (!card || !trip) return;
   const now = nowIn(tzOf(trip)).date;
@@ -1064,7 +1328,7 @@ function drawTripCard(trip) {
   });
   g.fillStyle = '#4D5A2E'; g.font = '700 36px system-ui, sans-serif';
   g.fillText([s.top ? `Biggest spend: ${s.top[0]}` : '', s.photos ? `${s.photos} photos` : ''].filter(Boolean).join('   •   '), W / 2, 1220);
-  g.font = '600 30px system-ui, sans-serif'; g.fillStyle = '#6b7340'; g.fillText('Made with Lily Pond Travel Hub 🪷', W / 2, 1290);
+  g.font = '600 30px system-ui, sans-serif'; g.fillStyle = '#6b7340'; g.fillText('Made with Waddl 🦆', W / 2, 1290);
   return c;
 }
 function downloadTripCard() {
@@ -1264,7 +1528,7 @@ function openSpotDetailView(place, silent) {
   container.classList.remove('hidden');
 
   const trip = getActiveTrip(), hotel = getHotelObj(trip);
-  const imgs = (place.gallery && place.gallery.length) ? place.gallery : [];
+  const imgs = (place.gallery && place.gallery.length) ? place.gallery.map(u => imgUrl(u)) : [];
   const hasSt = place.station && place.station !== 'N/A' && place.station !== 'No station nearby';
   const meKm = userLoc.live && place.lat ? calculateDistanceInKm(userLoc.lat, userLoc.lng, place.lat, place.lng) : null;
   const meMins = meKm !== null ? Math.round(meKm * 1000 / WALK_M_PER_MIN) : null;
@@ -1352,12 +1616,12 @@ function toggleActivityDone(i) {
 }
 
 function spotGalleryHtml(place) {
-  const imgs = place.gallery || [], manage = window._galleryManage === place.id;
+  const imgs = (place.gallery || []).map(u => imgUrl(u)), manage = window._galleryManage === place.id;
   return `<div class="flex items-center justify-between mb-2"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Photo gallery${imgs.length ? ' (' + imgs.length + ')' : ''}</p>
-    <div class="flex gap-2">${imgs.length ? `<button onclick="toggleGalleryManage('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600">${manage ? 'Done' : 'Manage'}</button>` : ''}
+    <div class="flex gap-2">${imgs.length > 1 ? `<button onclick="downloadAllGallery('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600"><i class="fa-solid fa-download me-1"></i>Save all</button>` : ''}${imgs.length ? `<button onclick="toggleGalleryManage('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600">${manage ? 'Done' : 'Manage'}</button>` : ''}
     <button onclick="triggerSpotPhotoUpload('${place.id}')" class="text-[11px] font-bold px-2.5 py-1 rounded-lg text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-camera me-1"></i>Add</button></div></div>
     <p id="spot-upload-status" class="text-[11px] font-semibold mb-1 hidden" style="color: var(--muted-teal);"></p>
-    ${imgs.length ? `<div class="grid grid-cols-3 gap-2">${imgs.map((u, i) => `<div class="relative aspect-square"><img src="${u}" onclick="openImageViewer(this.src)" loading="lazy" class="w-full h-full object-cover rounded-xl border border-stone-200 cursor-pointer">${manage ? `<button onclick="deleteGalleryPhoto('${place.id}', ${i})" aria-label="Delete photo" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full text-white text-xs flex items-center justify-center shadow" style="background: var(--carnival-red);"><i class="fa-solid fa-xmark"></i></button>` : ''}</div>`).join('')}</div>
+    ${imgs.length ? `<div class="grid grid-cols-3 gap-2">${imgs.map((u, i) => `<div class="relative aspect-square"><img src="${u}" onclick="openImageViewer(this.src)" loading="lazy" class="w-full h-full object-cover rounded-xl border border-stone-200 cursor-pointer">${!manage ? `<button onclick="downloadGalleryPhoto('${place.id}', ${i})" aria-label="Download photo" class="absolute bottom-1.5 right-1.5 w-8 h-8 rounded-full text-white flex items-center justify-center shadow" style="background: rgba(57,67,31,.85);"><i class="fa-solid fa-download text-xs"></i></button>` : ''}${manage ? `<button onclick="deleteGalleryPhoto('${place.id}', ${i})" aria-label="Delete photo" class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full text-white text-xs flex items-center justify-center shadow" style="background: var(--carnival-red);"><i class="fa-solid fa-xmark"></i></button>` : ''}</div>`).join('')}</div>
     <p class="text-[10px] text-stone-400 mt-2">Tap a photo to open it, then press Download to keep it.</p>` : `<p class="text-xs text-stone-400">No photos yet. Add the ones you take here. Anyone on the trip can open them and download.</p>`}`;
 }
 function toggleGalleryManage(id) { window._galleryManage = window._galleryManage === id ? null : id; const p = (getActiveTrip().places || []).find(x => x.id === id), b = document.getElementById('spot-gallery-box'); if (p && b) b.innerHTML = spotGalleryHtml(p); }
@@ -1368,6 +1632,7 @@ function deleteGalleryPhoto(id, i) {
     showCustomConfirm("Delete this photo for everyone?", () => {
         const url = p.gallery[i];
         p.gallery.splice(i, 1);
+        if (String(url).startsWith('photo:')) deletePhotoDoc(String(url).slice(6));
         try { if (storage && String(url).includes('firebasestorage')) storage.refFromURL(url).delete().catch(() => {}); } catch (e) {}
         saveAppData();
         openSpotDetailView(p, true);
@@ -1420,11 +1685,8 @@ function triggerSpotPhotoUpload(placeId) {
     for (let n = 0; n < files.length; n++) {
       if (st) { st.classList.remove('hidden'); st.textContent = `Processing photo ${n + 1} of ${files.length}...`; }
       
-      // Use your scaleImage function directly to convert the file to a local data URL
-      let url = await new Promise(res => scaleImage(files[n], 800, res));
-      if (url) {
-        added.push(url);
-      }
+      const data = await new Promise(res => scaleImage(files[n], 800, res));   // shrunk, then kept as its own cloud document
+      if (data) { const pid = 'g_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); savePhotoDoc(pid, data); added.push('photo:' + pid); }
     }
     place.gallery = [...added, ...(place.gallery || [])];
     saveAppData(); openSpotDetailView(place, true); renderSummaryPage();
@@ -1481,7 +1743,7 @@ function renderMasterPlacesList() {
   }
   
   list.forEach(p => {
-    const d = dist(p), img = p.gallery && p.gallery[0];
+    const d = dist(p), img = p.gallery && p.gallery[0] ? imgUrl(p.gallery[0], '') : null;
     const hasSt = p.station && p.station !== 'N/A' && p.station !== 'No station nearby';
     const card = document.createElement('div');
     card.className = 'lily-card p-2.5 flex gap-3 items-center cursor-pointer bg-white';
@@ -2384,6 +2646,7 @@ function deleteTripNow() {
   if (!id) return;
   const doomed = appData.trips.find(t => t.id === id);
   ((doomed && doomed.checklists && doomed.checklists.packing) || []).forEach(i => { if (i.photoRef) deletePhotoDoc(i.photoRef); });
+  appData.deletedTrips = { ...(appData.deletedTrips || {}), [id]: Date.now() };   // so an older copy can't bring it back
   appData.trips = appData.trips.filter(t => t.id !== id);
   try { localStorage.removeItem(checklistStorageKey(id)); } catch (e) {}
   if (activeTripId === id) activeTripId = appData.trips.length ? appData.trips[0].id : null;
@@ -2437,7 +2700,7 @@ function saveTripForm() {
   if (f) {
     uploadImageToFirebase(f, "covers").then(url => {
       pendingCover = url;
-      if (!pendingCover) scaleImage(f, 900, d => { pendingCover = d; saveTripFormCore(); });
+      if (!pendingCover) scaleImage(f, 640, d => { pendingCover = d; saveTripFormCore(); });
       else saveTripFormCore();
     });
   } else { pendingCover = null; saveTripFormCore(); }
@@ -2759,3 +3022,124 @@ try { loadCachedAppData(); } catch (e) {}
 setInterval(() => { if (!document.hidden) renderNowCard(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) renderNowCard(); });
 try { navigator.permissions && navigator.permissions.query({ name: 'geolocation' }).then(r => { if (r.state === 'granted') ensureLocation(); }).catch(() => {}); } catch (e) {}
+
+
+// ================= SHARE THE PLAN AS TEXT =================
+function buildPlanText(trip, scope, links) {
+  const total = getTotalTripDays(trip), L = [], doneMark = a => a.done ? ' ✓' : '';
+  L.push(`🪷 ${trip.name}`);
+  const range = `${trip.startDate || ''}${trip.endDate ? ' – ' + trip.endDate : ''}`.trim();
+  if (range) L.push(`📅 ${range}${trip.people ? ' • ' + trip.people : ''}`);
+  if (trip.activeHotel) L.push(`🏨 ${trip.activeHotel}`);
+  const days = scope === 'all' ? Array.from({ length: total }, (_, i) => i + 1) : [Number(scope)];
+  days.forEach(d => {
+    const acts = (trip.itinerary || []).filter(a => a.day === d).sort((x, y) => (x.time || '99').localeCompare(y.time || '99'));
+    const full = trip.startDate ? dayParts(trip, d).full : '';
+    L.push('', `*Day ${d}${full ? ' • ' + full : ''}*`);
+    if (!acts.length) L.push('Free day');
+    acts.forEach(a => {
+      let line = `${a.time || '--:--'}  ${a.title}`;
+      if (a.location && a.location !== a.title) line += ` — ${a.location}`;
+      L.push(line + doneMark(a));
+      if (a.notes) L.push(`   📝 ${a.notes}`);
+      const doc = a.docId && (trip.checklists?.packing || []).find(x => x.id === a.docId);
+      if (doc) L.push(`   🎫 ${doc.text}`);
+      const c = links ? resolveCoord(trip, a) : null;
+      if (c) L.push(`   📍 https://maps.google.com/?q=${c.lat},${c.lng}`);
+    });
+  });
+  L.push('', 'Made with Waddl 🪷');
+  return L.join('\n');
+}
+function openSharePlan() {
+  const trip = getActiveTrip(), sel = document.getElementById('plan-scope'), total = getTotalTripDays(trip);
+  sel.innerHTML = '<option value="all">Whole trip</option>' + Array.from({ length: total }, (_, i) => `<option value="${i + 1}">Day ${i + 1}${trip.startDate ? ' • ' + dayParts(trip, i + 1).full : ''}</option>`).join('');
+  sel.value = String(activeItineraryDay || 'all') === 'all' ? 'all' : String(activeItineraryDay);
+  if (!sel.value) sel.value = 'all';
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  document.getElementById('plan-links').checked = true;
+  document.getElementById('plan-status').textContent = '';
+  refreshPlanText();
+  openModal('modal-share-plan');
+}
+function refreshPlanText() {
+  document.getElementById('plan-text').value = buildPlanText(getActiveTrip(), document.getElementById('plan-scope').value, document.getElementById('plan-links').checked);
+}
+function planStatus(t) { document.getElementById('plan-status').textContent = t; }
+async function copyPlanText() {
+  const text = document.getElementById('plan-text').value;
+  try { await navigator.clipboard.writeText(text); planStatus('Copied ✓ Paste it into any chat.'); }
+  catch (e) { const ta = document.getElementById('plan-text'); ta.select(); try { document.execCommand('copy'); planStatus('Copied ✓ Paste it into any chat.'); } catch (e2) { planStatus('Press and hold the text to copy it.'); } }
+}
+async function sharePlanText() {
+  const text = document.getElementById('plan-text').value, t = getActiveTrip();
+  if (navigator.share) { try { await navigator.share({ title: t.name, text }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  copyPlanText();
+}
+function whatsappPlan() { window.open('https://wa.me/?text=' + encodeURIComponent(document.getElementById('plan-text').value), '_blank', 'noopener'); }
+
+// ================= QUICK PRICE CONVERTER =================
+const LOCAL_CUR = { 'Asia/Jakarta': 'IDR', 'Asia/Makassar': 'IDR', 'Asia/Jayapura': 'IDR', 'Asia/Pontianak': 'IDR', 'Asia/Kuala_Lumpur': 'MYR', 'Asia/Singapore': 'SGD', 'Asia/Bangkok': 'THB', 'Asia/Tokyo': 'JPY', 'Asia/Seoul': 'KRW', 'Asia/Hong_Kong': 'HKD', 'Australia/Sydney': 'AUD', 'Europe/London': 'GBP', 'Europe/Paris': 'EUR', 'America/New_York': 'USD', 'America/Los_Angeles': 'USD' };
+let _convTrip = null, _convSeq = 0, _convTimer = null;
+function parseAmount(t) {
+  const m = String(t || '').trim().toLowerCase().replace(/,/g, '').match(/^(\d+(?:\.\d+)?)\s*(k|rb|ribu|jt|juta|m)?$/);   // 45k, 45rb, 1.5jt all work
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (['k', 'rb', 'ribu'].includes(m[2])) n *= 1e3; else if (['jt', 'juta', 'm'].includes(m[2])) n *= 1e6;
+  return n;
+}
+async function getRate(from, to) {
+  if (from === to) return { rate: 1, date: '', live: true };
+  const key = from + '>' + to; let cache = {};
+  try { cache = JSON.parse(localStorage.getItem('lily_rates') || '{}'); } catch (e) {}
+  if (!(cache[key] && Date.now() - cache[key].t < 6 * 3600e3)) {
+    try {
+      const r = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=${to}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      if (j.rates && j.rates[to]) { cache[key] = { rate: j.rates[to], date: j.date, t: Date.now() }; try { localStorage.setItem('lily_rates', JSON.stringify(cache)); } catch (e) {} }
+    } catch (e) {}
+  }
+  let c = cache[key];
+  if (!c && cache[to + '>' + from]) { const rv = cache[to + '>' + from]; c = { rate: 1 / rv.rate, date: rv.date, t: rv.t }; }   // swapped direction works offline too
+  return c ? { rate: c.rate, date: c.date, live: Date.now() - c.t < 6 * 3600e3 } : null;
+}
+function initConverter(trip) {
+  const from = document.getElementById('conv-from'), to = document.getElementById('conv-to');
+  if (!from || !to || !trip) return;
+  if (!from.options.length) {
+    const opts = Object.keys(CURRENCIES).map(c => `<option value="${c}">${c} (${CURRENCIES[c]})</option>`).join('');
+    from.innerHTML = opts; to.innerHTML = opts;
+  }
+  if (_convTrip === trip.id) return;
+  _convTrip = trip.id;
+  const home = tripCur(trip); let local = LOCAL_CUR[tzOf(trip)] || 'USD';
+  if (local === home) local = home === 'USD' ? 'EUR' : 'USD';
+  setSelectValue('conv-from', local); setSelectValue('conv-to', home);
+  runConverter();
+}
+function runConverter() { clearTimeout(_convTimer); _convTimer = setTimeout(convertNow, 200); }
+async function convertNow() {
+  const seq = ++_convSeq, out = document.getElementById('conv-result'), note = document.getElementById('conv-note');
+  if (!out) return;
+  const amt = parseAmount(document.getElementById('conv-amount').value), from = document.getElementById('conv-from').value, to = document.getElementById('conv-to').value;
+  if (amt === null) { out.textContent = '—'; note.textContent = document.getElementById('conv-amount').value.trim() ? 'Type a number, like 45000 or 45k.' : 'Type a price to convert it.'; return; }
+  const r = await getRate(from, to);
+  if (seq !== _convSeq) return;
+  if (!r) { out.textContent = '—'; note.textContent = 'No rate saved yet. Connect to the internet once to load it.'; return; }
+  out.textContent = `${fmtMoney(amt, from)} = ${fmtMoney(amt * r.rate, to)}`;
+  note.textContent = from === to ? 'Same currency.' : `1 ${from} = ${+r.rate.toPrecision(5)} ${to} • ${r.live ? 'today’s rate' : 'saved rate' + (r.date ? ' from ' + r.date : '') + ' (offline)'}`;
+}
+function swapConverter() {
+  const f = document.getElementById('conv-from').value, t = document.getElementById('conv-to').value;
+  setSelectValue('conv-from', t); setSelectValue('conv-to', f); runConverter();
+}
+function convToExpense() {
+  const amt = parseAmount(document.getElementById('conv-amount').value), from = document.getElementById('conv-from').value;
+  openExpenseModal();
+  if (amt !== null) {
+    document.getElementById('exp-form-amount').value = String(amt);
+    if (from !== document.getElementById('exp-form-currency').value) setSelectValue('exp-form-currency', from);
+    updateRatePreview();
+  }
+}
