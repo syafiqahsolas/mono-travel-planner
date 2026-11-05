@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#4D5A2E">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Waddl">
+  <title>Waddl Travel Hub</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <!-- Custom Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="min-h-screen pb-32">
+
+  <!-- ================= SECTION 1: HOME PAGE ================= -->
+  <section id="section-home" class="w-full max-w-7xl mx-auto p-4 md:p-8 space-y-5">
+    <div id="now-card" class="hidden"></div>
+    <div style="background: linear-gradient(160deg, var(--beige), #E3E2B0 65%, #D3D79A);" class="rounded-3xl p-5 space-y-4 shadow-sm">
+      <div class="flex justify-between items-start">
+        <div>
+          <span class="text-[10px] font-extrabold uppercase tracking-widest" style="color: var(--carnival-red);">Where Next? 🦆</span>
+          <h1 style="color: var(--midnight-blue);" class="font-extrabold text-3xl leading-tight mt-1">Your Journey,<br><span style="color: var(--muted-teal);">Perfectly Planned.</span></h1>
+        </div>
+      </div>
+      <div class="relative">
+        <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 text-sm"></i>
+        <input type="text" id="tripSearchInput" oninput="switchHomeTab(this.value.trim() ? 'all' : 'upcoming')" placeholder="Where do you want to go?" class="w-full bg-white rounded-full py-3 pl-10 pr-4 text-xs shadow-sm border border-white">
+      </div>
+    </div>
+
+    <div class="flex space-x-2 bg-stone-200/60 p-1 rounded-2xl">
+      <button id="home-tab-upcoming" onclick="switchHomeTab('upcoming')" class="flex-1 py-2 rounded-xl text-xs font-bold text-stone-800 bg-white shadow-xs transition-all">Upcoming (6 months)</button>
+      <button id="home-tab-all" onclick="switchHomeTab('all')" class="flex-1 py-2 rounded-xl text-xs font-semibold text-stone-500 transition-all">All Trips</button>
+    </div>
+
+    <div id="home-view-upcoming">
+      <div id="upcoming-trips-list" class="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2"></div>
+    </div>
+
+    <div id="home-view-all" class="space-y-3 hidden">
+      <select id="tripCategoryFilter" onchange="renderAllTripsList()" class="w-full bg-white border border-stone-200 rounded-2xl p-2.5 text-xs">
+        <option value="ALL">All Categories</option>
+        <option value="Vacation">Vacation</option>
+        <option value="Business">Business</option>
+      </select>
+      <div id="all-trips-list" class="space-y-3"></div>
+    </div>
+
+  
+    <div id="install-card" class="hidden lily-card p-4 flex items-center gap-3 bg-white">
+      <span class="text-3xl">🦆</span>
+      <div class="flex-1 min-w-0"><p class="font-bold text-sm" style="color: var(--midnight-blue);">Install Waddl</p><p id="install-hint" class="text-[11px] text-stone-500">Add it to your home screen. It also works offline.</p></div>
+      <button id="install-btn" onclick="installApp()" style="background-color: var(--midnight-blue);" class="px-3.5 py-2 rounded-xl text-xs font-bold text-white flex-shrink-0">Install</button>
+    </div>
+    <div class="text-center pt-2"><button onclick="openSyncModal()" class="text-[11px] font-semibold px-4 py-2 rounded-full bg-white border border-stone-200 text-stone-500"><i class="fa-solid fa-life-ring me-1"></i>Data &amp; backup</button></div>
+  </section>
+
+
+  <!-- ================= SECTION 2: ACTIVE TRIP DASHBOARD ================= -->
+  <section id="section-trip-dashboard" class="w-full max-w-7xl mx-auto p-4 md:p-8 space-y-4 hidden">
+    <header class="trip-global-header flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/90 border border-stone-200/70 px-4 py-3 shadow-xs">
+      <div class="flex items-center gap-3"><span class="w-10 h-10 rounded-2xl flex items-center justify-center" style="background:var(--beige);color:var(--midnight-blue)"><i class="fa-solid fa-feather-pointed"></i></span><div><p class="text-[10px] uppercase tracking-widest font-extrabold" style="color:var(--muted-teal)">Waddl Travel Hub</p><p id="global-trip-name" class="font-extrabold text-sm" style="color:var(--midnight-blue)">Your trip</p></div></div>
+      <div class="flex items-center gap-2"><button onclick="openEmergency()" class="px-3 py-2 rounded-xl text-xs font-extrabold text-white" style="background-color: var(--carnival-red);">🆘 SOS</button><button onclick="openHomePage('upcoming')" class="px-4 py-2 rounded-xl text-xs font-bold border border-stone-200 bg-white hover:bg-stone-50" style="color:var(--midnight-blue)"><i class="fa-solid fa-house me-2"></i>Main page</button></div>
+    </header>
+    
+    <!-- PAGE A: SUMMARY (Image 7 Concept) -->
+    <div id="page-summary" class="space-y-4">
+      
+      <!-- Trip Banner Header -->
+      <div id="sum-banner" style="background: linear-gradient(135deg, var(--midnight-blue), var(--dark-green));" class="text-white p-5 rounded-3xl shadow-md space-y-3 relative overflow-hidden min-h-[11rem]">
+        <div class="flex justify-between items-start">
+          <button onclick="openHomePage('upcoming')" class="text-xs bg-white/20 px-3 py-1 rounded-full font-semibold text-white hover:bg-white/30"><i class="fa-solid fa-arrow-left me-1"></i>Back</button>
+          <button onclick="openTripModal(activeTripId)" class="text-white/80 hover:text-white"><i class="fa-solid fa-pen text-xs"></i></button>
+        </div>
+        <div>
+          <span class="text-[10px] uppercase tracking-wider font-bold px-2.5 py-0.5 rounded-full text-white" style="background-color: var(--carnival-red);">Vacation</span>
+          <h2 id="sum-trip-title" class="font-extrabold text-xl mt-1">Trip Destination</h2>
+          <p id="sum-trip-dates" class="text-xs text-stone-200 mt-0.5">Dates TBD</p>
+        </div>
+        <div class="flex justify-between items-center text-xs pt-2 border-t border-white/10">
+          <span><i class="fa-solid fa-users me-1"></i><span id="sum-card-people">1 Pax</span></span>
+          <span class="font-bold"><span id="sum-card-budget">RM 0</span></span>
+        </div>
+      </div>
+
+      <!-- Today / countdown + weather -->
+      <div id="today-card" class="lily-card p-4 space-y-3 bg-white"></div>
+
+      <!-- Readiness Progress Bar Card (Image 7 Concept) -->
+      <div class="lily-card p-4 space-y-3 bg-white">
+        <div class="flex justify-between items-center">
+          <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">Trip Readiness</h3>
+          <span id="readiness-percent" class="font-extrabold text-xs text-amber-600">0%</span>
+        </div>
+        <div class="w-full bg-stone-100 rounded-full h-3 overflow-hidden p-0.5 border border-stone-200">
+          <div id="readiness-bar-fill" class="h-full rounded-full transition-all duration-500" style="width: 0%; background-color: var(--muted-teal);"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center text-[10px] pt-1 font-semibold text-stone-600">
+          <div class="bg-stone-50 py-1.5 rounded-xl border border-stone-100"><i class="fa-solid fa-passport text-emerald-700 me-1"></i>Docs Ready</div>
+          <div class="bg-stone-50 py-1.5 rounded-xl border border-stone-100"><i class="fa-solid fa-hotel text-amber-600 me-1"></i>Bookings</div>
+          <div class="bg-stone-50 py-1.5 rounded-xl border border-stone-100"><i class="fa-solid fa-suitcase text-teal-700 me-1"></i>Packing</div>
+        </div>
+      </div>
+
+      <!-- Uploaded Documents Preview (filled by renderSummaryPage) -->
+      <div class="lily-card p-4 space-y-3">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">Travel Documents</h3>
+        <div id="summary-doc-preview"></div>
+      </div>
+
+      <!-- Starred Locations Snapshot -->
+      <div class="lily-card p-4 space-y-3">
+        <div class="flex justify-between items-center">
+          <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">Starred Must-Visits</h3>
+          <button onclick="unstarAllLocations()" class="text-[10px] text-stone-400 hover:text-red-500">Unstar All</button>
+        </div>
+        <div id="summary-starred-spots" class="grid grid-cols-2 gap-2"></div>
+      </div>
+
+      <!-- Key Itinerary Snapshot -->
+      <div class="lily-card p-4 space-y-3">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">Starred Itinerary Slots</h3>
+        <div id="summary-tentative-snapshot" class="space-y-2"></div>
+      </div>
+
+      <!-- Emergency & local info -->
+<div class="lily-card p-4 space-y-3 bg-white border-l-4 border-rose-500">
+  <div class="flex justify-between items-center">
+    <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">🚨 Emergency &amp; local info</h3>
+    <button onclick="openEmergency()" class="text-[11px] font-bold px-3 py-1.5 rounded-xl text-white" style="background: var(--carnival-red);">Full deck</button>
+  </div>
+  <div class="grid grid-cols-2 gap-2 text-xs">
+    <a href="tel:112" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800"><i class="fa-solid fa-phone-volume text-rose-600"></i> General emergency (112)</a>
+    <a href="tel:+62110" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800"><i class="fa-solid fa-shield-halved text-sky-700"></i> Police (110)</a>
+    <a href="tel:+62119" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800"><i class="fa-solid fa-truck-medical text-amber-600"></i> Ambulance (118 / 119)</a>
+    <a href="tel:+62113" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800"><i class="fa-solid fa-fire-extinguisher text-orange-600"></i> Fire (113)</a>
+    <a href="tel:+62215224947" class="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 flex items-center gap-2 font-semibold text-stone-800 col-span-2"><i class="fa-solid fa-building-flag text-emerald-700"></i> MY Embassy Jakarta (+62 21 522 4947)</a>
+  </div>
+</div>
+
+<!-- Quick price converter -->
+<div id="converter-card" class="lily-card p-4 space-y-3 bg-white">
+  <div class="flex items-center justify-between">
+    <h3 style="color: var(--midnight-blue);" class="font-bold text-sm">💱 Quick converter</h3>
+    <button onclick="swapConverter()" aria-label="Swap currencies" class="w-9 h-9 rounded-full bg-stone-100 text-stone-600"><i class="fa-solid fa-right-left"></i></button>
+  </div>
+  <div class="grid grid-cols-[1fr_8.5rem] gap-2">
+    <input type="text" id="conv-amount" inputmode="decimal" oninput="runConverter()" placeholder="e.g. 45000 or 45k" style="font-size:16px" class="w-full min-w-0 bg-stone-50 border border-stone-200 rounded-2xl px-3 py-2.5 text-stone-800 font-semibold">
+    <select id="conv-from" onchange="runConverter()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select>
+  </div>
+  <div class="grid grid-cols-[1fr_8.5rem] gap-2 items-center">
+    <p class="text-xs text-stone-500 ps-1">is how much in</p>
+    <select id="conv-to" onchange="runConverter()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select>
+  </div>
+  <div class="rounded-2xl p-3" style="background: var(--beige);">
+    <p id="conv-result" class="text-xl font-extrabold leading-snug break-words" style="color: var(--midnight-blue);">—</p>
+    <p id="conv-note" class="text-[11px] text-stone-500 mt-0.5">Type a price to convert it.</p>
+  </div>
+  <button onclick="convToExpense()" class="w-full py-2.5 rounded-xl text-xs font-bold bg-stone-100 text-stone-700"><i class="fa-solid fa-receipt me-1"></i>Add this as an expense</button>
+</div>
+
+<!-- Trip memory card (appears once the trip starts) -->
+<div id="post-travel-card" class="lily-card p-5 space-y-3 hidden" style="background: linear-gradient(160deg, #F1ECD3, #E3E2B0);">
+  <div class="flex items-center justify-between"><span class="text-[10px] font-extrabold uppercase tracking-widest" style="color: var(--midnight-blue);">📸 Trip memory card</span><span class="text-xl">🏆</span></div>
+  <h3 id="stat-title" class="font-extrabold text-base text-stone-800">Your trip so far</h3>
+  <div class="grid grid-cols-3 gap-2 text-center"><div class="bg-white/85 p-2.5 rounded-xl"><span id="stat-days" class="block font-extrabold text-sm text-stone-800">–</span><span class="text-[10px] text-stone-500">Days</span></div><div class="bg-white/85 p-2.5 rounded-xl"><span id="stat-done" class="block font-extrabold text-sm text-stone-800">–</span><span class="text-[10px] text-stone-500">Activities done</span></div><div class="bg-white/85 p-2.5 rounded-xl"><span id="stat-spots" class="block font-extrabold text-sm text-stone-800">–</span><span class="text-[10px] text-stone-500">Spots visited</span></div><div class="bg-white/85 p-2.5 rounded-xl"><span id="stat-km" class="block font-extrabold text-sm text-stone-800">–</span><span class="text-[10px] text-stone-500">Distance planned</span></div><div class="bg-white/85 p-2.5 rounded-xl"><span id="stat-spent" class="block font-extrabold text-sm text-stone-800">–</span><span class="text-[10px] text-stone-500">Total spent</span></div><div class="bg-white/85 p-2.5 rounded-xl"><span id="stat-pp" class="block font-extrabold text-sm text-stone-800">–</span><span class="text-[10px] text-stone-500">Per person</span></div></div>
+  <p id="stat-extra" class="text-[11px] text-stone-600"></p>
+  <div class="flex gap-2">
+    <button onclick="downloadTripCard()" class="flex-1 py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-download me-1"></i>Save image</button>
+    <button onclick="shareTripCard()" class="flex-1 py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-share-nodes me-1"></i>Share</button>
+  </div>
+  <p class="text-[10px] text-stone-500">Tap the circle on an activity, or ✓ on a spot, to count it as done.</p>
+</div>
+    </div>
+
+    
+
+    <!-- PAGE B: ITINERARY (day strip + route map + timeline) -->
+    <div id="page-itinerary" class="space-y-4 hidden">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <h2 style="color: var(--midnight-blue);" class="font-extrabold text-xl">Itinerary 🦆</h2>
+          <p id="itin-subtitle" class="text-xs text-stone-500"></p>
+        </div>
+        <button onclick="openSharePlan()" class="flex-shrink-0 px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-sm" style="background-color: var(--muted-teal);"><i class="fa-solid fa-share-nodes me-1"></i>Share plan</button>
+      </div>
+      <div id="itin-day-strip" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+      <div id="itin-map" class="rounded-3xl overflow-hidden shadow-sm"></div>
+      <div id="itinerary-timeline-container" class="relative"></div>
+      <button onclick="openItineraryModal()" style="background-color: var(--midnight-blue);" class="w-full py-3 rounded-2xl text-xs font-semibold text-white shadow-sm"><i class="fa-solid fa-plus me-1"></i>Add Activity</button>
+    </div>
+
+    <!-- PAGE C: WADDLE (Rubber-Duck Transit Exploration) -->
+    <div id="page-waddle" class="space-y-4 hidden">
+      <div style="background-color: var(--midnight-blue);" class="text-white p-4 rounded-3xl shadow-sm space-y-2">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="text-[10px] uppercase font-bold tracking-wider text-amber-300">Hotel Accommodation Base</span>
+            <h3 id="waddle-hotel-title" class="font-bold text-sm mt-0.5">Hotel Name</h3>
+          </div>
+          <button onclick="openHotelModal()" class="text-xs bg-white/20 px-2.5 py-1 rounded-xl font-semibold hover:bg-white/30"><i class="fa-solid fa-pen text-[10px] me-1"></i>Change</button>
+        </div>
+        <p id="waddle-hotel-station" class="text-xs text-stone-200">Nearest Station: Loading...</p>
+      </div>
+      <div id="waddle-map" class="rounded-3xl overflow-hidden shadow-sm"></div>
+
+      <div class="lily-card p-4 space-y-3">
+        <label style="color: var(--midnight-blue);" class="font-bold text-xs uppercase tracking-wider block"><i class="fa-solid fa-magnifying-glass me-1"></i>Explore Nearby Clusters</label>
+        <input type="text" id="waddleSearchInput" oninput="executeWaddleSearch()" placeholder="Search by category, station, or spot..." class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-xs">
+        <div id="waddle-quick-hubs" class="flex flex-wrap gap-1.5 pt-1"></div>
+        <label class="block text-[10px] uppercase tracking-wider font-bold text-stone-500 pt-1">Filter by category</label><div id="waddle-category-filters" class="flex flex-wrap gap-1.5"></div>
+      </div>
+      <div id="waddleSearchResults" class="space-y-2"></div>
+    </div>
+
+    <!-- PAGE D: SPOTS (one list, auto-filtered to your hotel's city) -->
+    <div id="page-master" class="space-y-4 hidden">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <h2 style="color: var(--midnight-blue);" class="font-extrabold text-xl">Spots</h2>
+          <p id="spots-city-note" class="text-[11px] text-stone-500"></p>
+        </div>
+        <button onclick="openMasterSpotModal()" aria-label="Add spot" style="background-color: var(--midnight-blue);" class="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-md flex-shrink-0"><i class="fa-solid fa-plus"></i></button>
+      </div>
+      <div class="relative">
+        <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 text-sm"></i>
+        <input type="text" id="masterSearchInput" oninput="renderMasterPlacesList()" placeholder="Search spots..." class="w-full bg-white rounded-full py-3 pl-10 pr-4 text-xs border border-stone-200 shadow-sm">
+      </div>
+      <div id="spots-city-chips" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+      <div id="master-category-chips" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+      <div id="masterPlacesContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+    </div>
+
+    <div id="page-spot-detail" class="space-y-4 hidden"></div>
+
+    <!-- PAGE E: CHECKLISTS (PACKING + DOCS) & EXPENSES -->
+    <div id="page-checklists" class="space-y-4 hidden">
+      <div class="flex space-x-2 bg-stone-200/60 p-1 rounded-2xl">
+        <button id="checktab-packing" onclick="switchChecklistSubTab('packing'); renderChecklistsAndExpenses();" class="flex-1 py-2 rounded-xl text-xs font-bold text-stone-800 bg-white shadow-xs transition-all">Packing</button>
+        <button id="checktab-expenses" onclick="switchChecklistSubTab('expenses'); renderChecklistsAndExpenses();" class="flex-1 py-2 rounded-xl text-xs font-semibold text-stone-500 transition-all">Expenses</button>
+      </div>
+
+      <!-- PACKING CATEGORIES SUB-TAB -->
+      <div id="checklist-sub-packing" class="space-y-3 pt-1">
+        <div class="flex justify-between items-center">
+          <div class="flex space-x-2 bg-white border border-stone-200 p-1 rounded-2xl">
+            <button onclick="selectPackingCategory('clothes')" id="pack-cat-clothes" class="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 text-white shadow-xs"><i class="fa-solid fa-shirt me-1"></i>Clothes</button>
+            <button onclick="selectPackingCategory('toiletries')" id="pack-cat-toiletries" class="px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-400"><i class="fa-solid fa-soap me-1"></i>Toiletries</button>
+            <button onclick="selectPackingCategory('electronics')" id="pack-cat-electronics" class="px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-400"><i class="fa-solid fa-plug me-1"></i>Electronics</button>
+            <button onclick="selectPackingCategory('documents')" id="pack-cat-documents" class="px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-400"><i class="fa-solid fa-passport me-1"></i>Docs</button>
+          </div>
+        </div>
+        <div class="flex gap-2 items-center">
+          <div class="relative flex-1 min-w-0"><i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"></i><input id="packingSearchInput" type="search" oninput="renderCategorizedPackingList()" placeholder="Search items in this category…" class="w-full bg-white border border-stone-200 rounded-2xl py-2.5 pl-9 pr-3 text-xs"></div>
+          <button onclick="openPackingItemModal()" style="background-color: var(--midnight-blue);" class="px-4 py-2.5 rounded-2xl text-xs font-semibold text-white flex-shrink-0"><i class="fa-solid fa-plus me-1"></i>Add</button>
+        </div>
+        <p class="text-[10px] text-stone-400 px-1">Checklist items and completion status are saved on this device only.</p>
+        <div id="packing-items-container" class="space-y-2 text-xs"></div>
+      </div>
+
+      <!-- EXPENSES SUB-TAB -->
+      <div id="checklist-sub-expenses" class="space-y-4 text-xs pt-1 hidden">
+        <div class="lily-card p-5 space-y-4 bg-white relative">
+          <div class="flex justify-between items-center">
+            <h4 style="color: var(--midnight-blue);" class="font-extrabold text-base">Expense Breakdown</h4>
+            <button onclick="openExpenseModal()" style="background-color: var(--midnight-blue);" class="px-3 py-1.5 rounded-xl font-semibold text-xs text-white flex items-center gap-1 shadow-xs">
+              <i class="fa-solid fa-plus text-[10px]"></i> Add Expense
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between gap-4 py-1">
+            <div class="relative w-28 h-28 flex items-center justify-center flex-shrink-0">
+              <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                <path class="text-stone-100" stroke-width="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="text-emerald-800" stroke-width="4.5" stroke-dasharray="45, 100" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="text-amber-500" stroke-width="4.5" stroke-dasharray="25, 100" stroke-dashoffset="-45" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="text-teal-500" stroke-width="4.5" stroke-dasharray="15, 100" stroke-dashoffset="-70" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              </svg>
+              <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span class="text-[9px] uppercase tracking-wider font-semibold text-stone-400">Total</span>
+                <span id="expense-total-display" style="color: var(--midnight-blue);" class="font-extrabold text-xs">RM 0</span>
+              </div>
+            </div>
+
+            <div id="expense-categories-legend" class="space-y-1.5 text-xs flex-1">
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-800"></span>Hotel & Stay</span><strong id="cat-amount-stay" class="text-stone-800">RM 0</strong></div>
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>Food & Cafe</span><strong id="cat-amount-food" class="text-stone-800">RM 0</strong></div>
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-teal-500"></span>Transport</span><strong id="cat-amount-transport" class="text-stone-800">RM 0</strong></div>
+              <div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full opacity-60" style="background-color: var(--dusty-rose);"></span>Other</span><strong id="cat-amount-other" class="text-stone-800">RM 0</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="expense-split-container"></div>
+        <div id="expenses-list-container" class="space-y-2"></div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ================= FLOATING NOTCH BOTTOM NAVBAR ================= -->
+  <div id="floating-bottom-nav" class="hidden fixed bottom-3 left-0 right-0 z-40 max-w-xl mx-auto px-4">
+    <nav class="floating-nav-bar relative px-2 py-2 flex justify-around items-center text-[11px] font-semibold text-stone-400">
+      <button id="nav-summary" onclick="switchDashboardPage('summary')" class="flex flex-col items-center justify-center w-12 h-12 rounded-full transition-all duration-200">
+        <i class="fa-solid fa-suitcase-rolling text-base"></i>
+        <span class="text-[10px] mt-0.5">Trip</span>
+      </button>
+
+      <button id="nav-itinerary" onclick="switchDashboardPage('itinerary')" class="flex flex-col items-center justify-center w-12 h-12 rounded-full transition-all duration-200">
+        <i class="fa-solid fa-calendar-days text-base"></i>
+        <span class="text-[10px] mt-0.5">Itinerary</span>
+      </button>
+
+      <!-- Waddle Rubber-Duck Icon -->
+      <button id="nav-waddle" onclick="switchDashboardPage('waddle')" class="flex flex-col items-center justify-center w-12 h-12 rounded-full transition-all duration-200">
+        <i class="not-italic text-base leading-none">🦆</i>
+        <span class="text-[10px] mt-0.5">Waddle</span>
+      </button>
+
+      <button id="nav-master" onclick="switchDashboardPage('master')" class="flex flex-col items-center justify-center w-12 h-12 rounded-full transition-all duration-200">
+        <i class="fa-solid fa-location-dot text-base"></i>
+        <span class="text-[10px] mt-0.5">Spots</span>
+      </button>
+
+      <button id="nav-checklists" onclick="switchDashboardPage('checklists')" class="flex flex-col items-center justify-center w-12 h-12 rounded-full transition-all duration-200">
+        <i class="fa-solid fa-clipboard-list text-base"></i>
+        <span class="text-[10px] mt-0.5">Checklist</span>
+      </button>
+    </nav>
+  </div>
+
+
+  <!-- ================= MODALS ================= -->
+
+  <!-- Modal 1: Add Packing Item Popup -->
+  <div id="modal-packing" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 id="modal-packing-title" style="color: var(--midnight-blue);" class="font-bold text-base">Add Packing Item</h3>
+        <button onclick="closeModal('modal-packing')" class="text-stone-400 hover:text-stone-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">Item Name</label>
+          <input type="text" id="pack-form-text" placeholder="e.g. Universal Adapter" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800">
+        </div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">Category</label>
+          <select id="pack-form-category" onchange="toggleDocUploadVisibility()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800">
+            <option value="clothes">Clothes & Accessories</option>
+            <option value="toiletries">Toiletries & Skincare</option>
+            <option value="electronics">Electronics & Gadgets</option>
+            <option value="documents">Documents & Money</option>
+          </select>
+        </div>
+        <!-- Shown only when category = documents -->
+        <div id="pack-doc-upload-container" class="hidden">
+          <label class="block text-stone-500 mb-1 font-medium">Attach Photo (optional)</label>
+          <input type="file" id="pack-form-file" accept="image/*" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs">
+        </div>
+        <label for="pack-form-shared" class="flex items-start gap-3 rounded-2xl p-3 cursor-pointer" style="background: var(--beige);">
+          <input type="checkbox" id="pack-form-shared" class="mt-0.5 w-4 h-4 rounded flex-shrink-0">
+          <span class="text-xs leading-snug"><b style="color: var(--midnight-blue);">👥 Share with everyone</b><br><span class="text-stone-500">Everyone sees this item and its photo, and ticking it ticks it on all phones (e.g. group flight tickets). Leave off to keep it only on this phone (e.g. your clothes, passport).</span></span>
+        </label>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modal-packing')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="savePackingItemForm()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Add Item</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Add/Edit Trip -->
+  <div id="modal-trip" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 id="modal-trip-title" style="color: var(--midnight-blue);" class="font-bold text-base">Add New Trip</h3>
+        <button onclick="closeModal('modal-trip')" class="text-stone-400 hover:text-stone-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <input type="hidden" id="trip-form-id" />
+      <div class="space-y-3 text-xs">
+        <div><label class="block text-stone-500 mb-1 font-medium">Trip Destination Name</label><input type="text" id="trip-form-title" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="block text-stone-500 mb-1 font-medium">Start Date</label><input type="date" id="trip-form-start-date" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+          <div><label class="block text-stone-500 mb-1 font-medium">End Date</label><input type="date" id="trip-form-end-date" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        </div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">Trip Category</label>
+          <select id="trip-form-category" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800">
+            <option value="Vacation">Vacation</option>
+            <option value="Business">Business</option>
+          </select>
+        </div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Travelers</label><input type="text" id="trip-form-people" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Target Budget</label><input type="text" id="trip-form-budget" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Main currency (totals &amp; splitting)</label><select id="trip-form-currency" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Time zone (activity times are local there)</label><select id="trip-form-tz" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Cover Photo (optional)</label><input type="file" id="trip-form-cover" accept="image/*" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs"></div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button id="trip-delete-btn" onclick="confirmDeleteTrip()" class="hidden me-auto px-3 py-2 rounded-2xl text-xs font-semibold" style="color: var(--carnival-red); background: #fdecec;"><i class="fa-solid fa-trash me-1"></i>Delete</button>
+        <button onclick="closeModal('modal-trip')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="saveTripForm()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save Trip</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Itinerary Activity -->
+  <div id="modal-itinerary" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 id="itin-modal-title" style="color: var(--midnight-blue);" class="font-bold text-base">Itinerary Activity</h3>
+        <button onclick="closeModal('modal-itinerary')" class="text-stone-400 hover:text-stone-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <div class="space-y-3 text-xs">
+        <div><label class="block text-stone-500 mb-1 font-medium">Activity Title</label><input type="text" id="itin-form-title" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">Time</label>
+          <input type="time" id="itin-form-time" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-semibold">
+        </div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Location / map pin</label><div class="location-picker-wrap"><input type="text" id="itin-form-location" autocomplete="off" oninput="onItinPlacePick(); renderItinLocationPopup()" onfocus="renderItinLocationPopup()" onblur="setTimeout(() => document.getElementById('itin-location-popup')?.classList.add('hidden'), 140)" onkeydown="handleItinLocationKeydown(event)" placeholder="Search a place or type a custom location" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"><div id="itin-location-popup" class="location-suggestion-popup hidden" role="listbox" aria-label="Location suggestions"></div></div><p class="text-[10px] text-stone-400 mt-1">Choose a saved spot, hotel, or station, or keep your own custom location.</p><input type="hidden" id="itin-form-place"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Ticket / document (from Checklist Docs)</label><select id="itin-form-doc" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></select></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Or upload a new ticket photo (saved to Docs)</label><input type="file" id="itin-form-docfile" accept="image/*" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Notes</label><textarea id="itin-form-notes" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></textarea></div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modal-itinerary')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="saveItineraryForm()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save Activity</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Hotel Base Setup -->
+  <div id="modal-hotel" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Select Hotel Base</h3>
+        <button onclick="closeModal('modal-hotel')" class="text-stone-400 hover:text-stone-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">1. Choose City</label>
+          <select id="hotel-city-dropdown" onchange="populateHotelNameDropdown()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-semibold"></select>
+        </div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">2. Choose Hotel</label>
+          <select id="hotel-name-dropdown" onchange="onHotelSelectionChange()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-semibold"></select>
+        </div>
+        <div class="bg-stone-50 p-3 rounded-2xl border border-stone-200/60 space-y-1">
+          <span class="text-[10px] text-stone-400 font-semibold uppercase tracking-wider">Nearest Station</span>
+          <p id="hotel-form-preview-station" style="color: var(--midnight-blue);" class="font-bold text-xs">Select hotel...</p>
+        </div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modal-hotel')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="saveHotelForm()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save Hotel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 5: Master Spot Add/Edit -->
+  <div id="modal-master-spot" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 id="modal-spot-title" style="color: var(--midnight-blue);" class="font-bold text-base">Location Spot</h3>
+        <button onclick="closeModal('modal-master-spot')" class="text-stone-400 hover:text-stone-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <input type="hidden" id="spot-form-id" />
+      <div class="space-y-3 text-xs">
+        <div><label class="block text-stone-500 mb-1 font-medium">Spot Name</label><input type="text" id="spot-form-name" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div class="flex items-end gap-2"><div class="flex-1"><label class="block text-stone-500 mb-1 font-medium">Airport code (optional)</label><input type="text" id="spot-form-code" placeholder="e.g. CGK, KUL, HND" style="text-transform: uppercase" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div><button type="button" onclick="fillFromAirportCode()" class="px-4 py-2.5 rounded-2xl text-xs font-bold text-white" style="background: var(--muted-teal);">Fill in</button></div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">City</label>
+          <input type="text" id="spot-form-city" list="spot-city-list" placeholder="e.g. Bandung, Tokyo" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"><datalist id="spot-city-list"></datalist>
+        </div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">Category</label>
+          <select id="spot-form-category" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800">
+            <option value="Attraction">Attraction</option>
+            <option value="Coffee">Coffee</option>
+            <option value="Food">Food</option>
+            <option value="Shopping Mall">Shopping Mall</option>
+          <option value="Airport">Airport</option><option value="Transit">Transit</option></select>
+        </div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Nearest Station</label><input type="text" id="spot-form-station" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Walking Note</label><input type="text" id="spot-form-walk" placeholder="e.g., 15 min walk" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="block text-stone-500 mb-1 font-medium">Latitude</label><input type="text" id="spot-form-lat" placeholder="-6.9143" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+          <div><label class="block text-stone-500 mb-1 font-medium">Longitude</label><input type="text" id="spot-form-lng" placeholder="107.6099" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="findSpotCoords()" class="flex-1 py-2 rounded-xl text-[11px] font-semibold bg-stone-100 text-stone-700"><i class="fa-solid fa-magnifying-glass-location me-1"></i>Find coordinates</button>
+          <button onclick="copySpotLine()" class="flex-1 py-2 rounded-xl text-[11px] font-semibold bg-stone-100 text-stone-700"><i class="fa-regular fa-copy me-1"></i>Copy for location.js</button>
+        </div>
+        <button type="button" onclick="useHereForSpot()" class="w-full py-2 rounded-xl text-[11px] font-semibold bg-stone-100 text-stone-700"><i class="fa-solid fa-location-crosshairs me-1"></i>I’m here now (use my location)</button>
+        <p id="spot-geo-msg" class="text-[11px] font-semibold" style="color: var(--muted-teal);"></p>
+        <div id="spot-geo-results" class="space-y-1.5"></div>
+        <p class="text-[10px] text-stone-400">You can also paste a Google Maps link, or “lat, lng”, into Latitude.</p>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modal-master-spot')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="saveMasterSpotForm()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save Spot</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 6: Expense Record -->
+  <div id="modal-expense" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 id="modal-expense-title" style="color: var(--midnight-blue);" class="font-bold text-base">Expense Record</h3>
+        <button onclick="closeModal('modal-expense')" class="text-stone-400 hover:text-stone-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <input type="hidden" id="exp-form-idx" value="-1" />
+      <div class="space-y-3 text-xs">
+        <div><label class="block text-stone-500 mb-1 font-medium">Description</label><input type="text" id="exp-form-title" placeholder="e.g. Hotel Deposit" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Amount</label>
+          <div class="grid grid-cols-[1fr_9.5rem] gap-2">
+            <input type="number" inputmode="decimal" id="exp-form-amount" oninput="updateRatePreview()" placeholder="e.g. 150" style="font-size:16px" class="w-full min-w-0 bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-semibold">
+            <select id="exp-form-currency" onchange="onExpCurrencyChange()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select>
+          </div></div>
+        <div id="exp-rate-box" class="hidden rounded-2xl p-3 space-y-1.5" style="background: var(--beige);">
+          <label class="block text-stone-600 font-semibold">Exchange rate: 1 <span id="exp-rate-from"></span> = <span id="exp-rate-to"></span></label>
+          <div class="flex items-center gap-2"><input type="number" inputmode="decimal" step="any" id="exp-form-rate" oninput="updateRatePreview()" placeholder="rate" style="font-size:16px" class="flex-1 min-w-0 bg-white border border-stone-200 rounded-2xl p-2.5 text-stone-800"><span id="exp-rate-preview" class="text-xs font-bold flex-shrink-0" style="color: var(--midnight-blue);"></span></div>
+          <p id="exp-rate-note" class="text-[10px] text-stone-500"></p>
+        </div>
+        <div>
+          <label class="block text-stone-500 mb-1 font-medium">Category</label>
+          <select id="exp-form-category" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium">
+            <option value="Hotel & Stay">Hotel & Stay</option>
+            <option value="Food & Cafe">Food & Cafe</option>
+            <option value="Transport">Transport</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Paid by</label><select id="exp-form-paidby" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 font-medium"></select></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Split between</label><div id="exp-form-split" class="flex flex-wrap gap-1.5"></div></div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modal-expense')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="saveExpenseForm()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save Expense</button>
+      </div>
+    </div>
+  </div>
+
+
+
+  <div id="offline-pill" class="hidden fixed top-2 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-1 rounded-full text-[11px] font-bold text-white shadow-md" style="background: var(--carnival-red);">Offline • showing saved data</div>
+
+  <!-- Record a payment -->
+  <div id="modal-payment" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Record a payment</h3>
+        <button onclick="closeModal('modal-payment')" class="text-stone-400 hover:text-stone-600" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <p id="pay-text" class="text-sm text-stone-700"></p>
+      <div><label class="block text-stone-500 mb-1 text-xs font-medium">Amount paid (change it if only part was paid)</label>
+        <div class="flex items-center gap-2"><span id="pay-cur" class="font-bold text-sm" style="color: var(--midnight-blue);"></span>
+        <input type="number" inputmode="decimal" step="any" id="pay-amount" style="font-size:16px" class="flex-1 min-w-0 bg-stone-50 border border-stone-200 rounded-2xl px-3 py-2.5 text-stone-800 font-semibold"></div></div>
+      <div class="flex justify-end space-x-2 pt-1">
+        <button onclick="closeModal('modal-payment')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="savePayment()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save payment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Travellers -->
+  <div id="modal-travelers" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Who is travelling?</h3>
+        <button onclick="closeModal('modal-travelers')" class="text-stone-400 hover:text-stone-600" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <p class="text-[11px] text-stone-500">Rename people, or add and remove travellers. Past expenses follow the new names.</p>
+      <div id="travelers-list" class="space-y-2"></div>
+      <button type="button" onclick="addTravelerRow()" class="w-full py-2.5 rounded-2xl text-xs font-bold border border-dashed border-stone-300 text-stone-600"><i class="fa-solid fa-plus me-1"></i>Add traveller</button>
+      <div class="flex justify-end space-x-2 pt-1">
+        <button onclick="closeModal('modal-travelers')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Cancel</button>
+        <button onclick="saveTravelers()" style="background-color: var(--midnight-blue);" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Show to driver -->
+  <div id="modal-driver" class="hidden fixed inset-0 z-[70] flex flex-col justify-center p-6 text-white overflow-y-auto" style="background: linear-gradient(160deg, var(--midnight-blue), var(--dark-green));">
+    <button onclick="closeModal('modal-driver')" aria-label="Close" class="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/15 text-xl"><i class="fa-solid fa-xmark"></i></button>
+    <div id="driver-body" class="max-w-3xl mx-auto w-full"></div>
+  </div>
+
+  <!-- Emergency & local info -->
+  <div id="modal-emergency" class="hidden fixed inset-0 z-[65] overflow-y-auto" style="background: var(--pond-bg);">
+    <div class="max-w-xl mx-auto p-4 space-y-3 pb-16">
+      <div class="flex items-center justify-between pt-2"><h2 class="font-extrabold text-xl" style="color: var(--midnight-blue);">🆘 Emergency &amp; local info</h2>
+        <button onclick="closeModal('modal-emergency')" aria-label="Close" class="w-10 h-10 rounded-full bg-white border border-stone-200"><i class="fa-solid fa-xmark"></i></button></div>
+      <div id="emergency-body" class="space-y-3"></div>
+    </div>
+  </div>
+
+  <!-- Sync status -->
+  <button id="sync-pill" onclick="openSyncModal()" class="hidden"></button>
+  <div id="modal-sync" class="hidden fixed inset-0 z-[75] flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">☁ Data &amp; backup</h3>
+        <button onclick="closeModal('modal-sync')" class="text-stone-400 hover:text-stone-600" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <p id="sync-status-text" class="text-xs text-stone-700 leading-relaxed"></p>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="retrySync()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-rotate me-1"></i>Save now</button>
+        <button onclick="exportBackup()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-download me-1"></i>Download backup</button>
+      </div>
+      <button onclick="pickBackupFile()" class="w-full py-2.5 rounded-xl text-xs font-bold bg-stone-100 text-stone-700"><i class="fa-solid fa-upload me-1"></i>Restore from a backup file</button>
+      <input type="file" id="sync-restore-file" accept="application/json,.json" class="hidden" onchange="onBackupChosen(this)">
+      <div id="sync-restore-confirm" class="hidden rounded-2xl p-3 space-y-2" style="background: #fdecec;">
+        <p class="text-xs font-bold" style="color: var(--carnival-red);">Replace everything with this backup?</p>
+        <p id="sync-restore-info" class="text-[11px] text-stone-700"></p>
+        <div class="flex gap-2 justify-end"><button onclick="document.getElementById('sync-restore-confirm').classList.add('hidden')" class="px-3 py-2 rounded-xl text-xs bg-white text-stone-600">Cancel</button><button onclick="confirmRestore()" class="px-3 py-2 rounded-xl text-xs font-bold text-white" style="background: var(--carnival-red);">Replace</button></div>
+      </div>
+      <button id="sync-phone-backup" onclick="downloadSavedBackup()" class="hidden w-full py-2 rounded-xl text-[11px] font-semibold bg-stone-100 text-stone-600">Download the version that was on this phone before</button>
+      <p class="text-[10px] text-stone-400 leading-relaxed">Download a backup before clearing your browser data. Private checklist items are included in the backup file only.</p>
+    </div>
+  </div>
+  <div id="modal-version-choice" class="hidden fixed inset-0 z-[80] flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[92vh] overflow-y-auto">
+      <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Which version should we keep?</h3>
+      <p class="text-xs text-stone-600 leading-relaxed">This phone and the cloud have different versions of your trips. Nothing is lost either way: the one you don't pick is saved so you can download it.</p>
+      <div id="vc-body" class="space-y-2"></div>
+      <div class="grid grid-cols-1 gap-2 pt-1">
+        <button onclick="keepPhoneVersion()" class="py-3 rounded-2xl text-sm font-bold text-white" style="background: var(--midnight-blue);">Keep this phone's version</button>
+        <button onclick="useCloudVersion()" class="py-3 rounded-2xl text-sm font-bold bg-stone-100 text-stone-700">Use the cloud version</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete trip -->
+  <div id="modal-delete-trip" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl border-2 border-stone-200">
+      <div class="flex items-center gap-3">
+        <span class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style="background: #fdecec; color: var(--carnival-red);"><i class="fa-solid fa-trash"></i></span>
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base leading-tight">Delete “<span id="delete-trip-name"></span>”?</h3>
+      </div>
+      <p class="text-xs text-stone-600 leading-relaxed">This permanently removes the itinerary, spots you added, expenses and payments for <b>everyone</b> using this app. Your packing list for it is removed from this phone. This can’t be undone.</p>
+      <div class="flex justify-end space-x-2 pt-1">
+        <button onclick="closeModal('modal-delete-trip')" class="px-3.5 py-2 bg-stone-100 text-stone-600 rounded-2xl text-xs font-medium">Keep trip</button>
+        <button onclick="deleteTripNow()" class="px-4 py-2 rounded-2xl text-xs font-semibold text-white" style="background-color: var(--carnival-red);">Delete trip</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share the plan -->
+  <div id="modal-share-plan" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-md p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-stone-100 pb-2.5">
+        <h3 style="color: var(--midnight-blue);" class="font-bold text-base">Share the plan</h3>
+        <button onclick="closeModal('modal-share-plan')" class="text-stone-400 hover:text-stone-600" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <select id="plan-scope" onchange="refreshPlanText()" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800 text-sm font-medium"></select>
+      <label class="flex items-center gap-2 text-xs text-stone-600 cursor-pointer"><input type="checkbox" id="plan-links" onchange="refreshPlanText()" class="w-4 h-4 rounded"> Include map links</label>
+      <textarea id="plan-text" rows="12" style="font-size:13px" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-3 text-stone-800 font-mono leading-relaxed"></textarea>
+      <p id="plan-status" class="text-[11px] font-semibold" style="color: var(--muted-teal);"></p>
+      <div class="grid grid-cols-3 gap-2">
+        <button onclick="copyPlanText()" class="py-2.5 rounded-xl text-xs font-bold bg-stone-100 text-stone-700"><i class="fa-regular fa-copy me-1"></i>Copy</button>
+        <button onclick="whatsappPlan()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: #25a35a;"><i class="fa-brands fa-whatsapp me-1"></i>WhatsApp</button>
+        <button onclick="sharePlanText()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-share-nodes me-1"></i>Share</button>
+      </div>
+      <p class="text-[10px] text-stone-400">You can edit the text above before sending.</p>
+    </div>
+  </div>
+
+  <!-- Image / document viewer -->
+  <div id="modal-image" onclick="closeModal('modal-image')" class="hidden fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-3">
+    <button class="absolute top-4 right-4 text-white text-2xl"><i class="fa-solid fa-xmark"></i></button>
+    <img id="image-viewer-img" src="" class="max-w-full max-h-full object-contain rounded-xl">
+    <a id="image-viewer-dl" href="#" download="photo.jpg" onclick="return downloadViewerImage(event)" class="absolute bottom-5 left-1/2 -translate-x-1/2 px-5 py-3 rounded-full text-sm font-bold text-white shadow-lg" style="background: var(--muted-teal);"><i class="fa-solid fa-download me-2"></i>Download</a>
+  </div>
+
+
+  <!-- ================= SCRIPTS ================= -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  
+<!-- Add Firebase Storage -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+
+  <script src="transit_data.js"></script>
+  <script src="airport_data.js"></script>
+  <script src="hotel_data.js"></script>
+  <script src="location.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="app.js"></script>
+
+</body>
+</html>
