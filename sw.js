@@ -1,5 +1,5 @@
-/* Lily Pond Travel Hub - offline support */
-const CACHE = 'lilypond-v2', TILES = 'lilypond-tiles-v1';
+/* Waddl - offline support */
+const CACHE = 'waddl-v3', TILES = 'lilypond-tiles-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'transit_data.js', 'airport_data.js', 'hotel_data.js', 'location.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 const WAIT_MS = 1200;   // on a weak signal, use the saved copy after this long so the app still opens fast
 
