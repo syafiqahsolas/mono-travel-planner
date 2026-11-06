@@ -34,6 +34,7 @@
           <h1 style="color: var(--midnight-blue);" class="font-extrabold text-3xl leading-tight mt-1">Your Journey,<br><span style="color: var(--muted-teal);">Perfectly Planned.</span></h1>
         </div>
         <div class="flex items-center gap-2 flex-shrink-0">
+          <button onclick="openEmergency()" aria-label="Emergency info" class="h-10 px-3 rounded-full text-white text-xs font-extrabold flex items-center justify-center shadow-md" style="background-color: var(--carnival-red);">🆘 SOS</button>
           <button onclick="openTripModal()" aria-label="New trip" style="background-color: var(--midnight-blue);" class="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-md"><i class="fa-solid fa-plus text-sm"></i></button>
         </div>
       </div>
@@ -371,8 +372,9 @@
         </div>
         <!-- Shown only when category = documents -->
         <div id="pack-doc-upload-container" class="hidden">
-          <label class="block text-stone-500 mb-1 font-medium">Attach Photo (optional)</label>
-          <input type="file" id="pack-form-file" accept="image/*" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs">
+          <label class="block text-stone-500 mb-1 font-medium">Attach a photo or PDF (optional)</label>
+          <input type="file" id="pack-form-file" accept="image/*,application/pdf" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs">
+          <p id="pack-file-current" class="text-[10px] text-stone-500 mt-1"></p>
         </div>
         <label for="pack-form-shared" class="flex items-start gap-3 rounded-2xl p-3 cursor-pointer" style="background: var(--beige);">
           <input type="checkbox" id="pack-form-shared" class="mt-0.5 w-4 h-4 rounded flex-shrink-0">
@@ -436,7 +438,7 @@
         </div>
         <div><label class="block text-stone-500 mb-1 font-medium">Location / map pin</label><div class="location-picker-wrap"><input type="text" id="itin-form-location" autocomplete="off" oninput="onItinPlacePick(); renderItinLocationPopup()" onfocus="renderItinLocationPopup()" onblur="setTimeout(() => document.getElementById('itin-location-popup')?.classList.add('hidden'), 140)" onkeydown="handleItinLocationKeydown(event)" placeholder="Search a place or type a custom location" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"><div id="itin-location-popup" class="location-suggestion-popup hidden" role="listbox" aria-label="Location suggestions"></div></div><p class="text-[10px] text-stone-400 mt-1">Choose a saved spot, hotel, or station, or keep your own custom location.</p><input type="hidden" id="itin-form-place"></div>
         <div><label class="block text-stone-500 mb-1 font-medium">Ticket / document (from Checklist Docs)</label><select id="itin-form-doc" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></select></div>
-        <div><label class="block text-stone-500 mb-1 font-medium">Or upload a new ticket photo (saved to Docs)</label><input type="file" id="itin-form-docfile" accept="image/*" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs"></div>
+        <div><label class="block text-stone-500 mb-1 font-medium">Or upload a ticket (photo or PDF, saved to Docs and shared)</label><input type="file" id="itin-form-docfile" accept="image/*,application/pdf" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2 text-stone-800 text-xs"></div>
         <div><label class="block text-stone-500 mb-1 font-medium">Notes</label><textarea id="itin-form-notes" class="w-full bg-stone-50 border border-stone-200 rounded-2xl p-2.5 text-stone-800"></textarea></div>
       </div>
       <div class="flex justify-end space-x-2 pt-2">
@@ -681,6 +683,17 @@
         <button onclick="sharePlanText()" class="py-2.5 rounded-xl text-xs font-bold text-white" style="background: var(--midnight-blue);"><i class="fa-solid fa-share-nodes me-1"></i>Share</button>
       </div>
       <p class="text-[10px] text-stone-400">You can edit the text above before sending.</p>
+    </div>
+  </div>
+
+  <!-- PDF / file viewer -->
+  <div id="modal-file" class="hidden fixed inset-0 z-[66] flex items-center justify-center modal-backdrop p-4">
+    <div class="bg-white rounded-3xl w-full max-w-2xl p-5 space-y-3 shadow-2xl border-2 border-stone-200 max-h-[94vh] overflow-y-auto">
+      <div class="flex justify-between items-start gap-3 border-b border-stone-100 pb-2.5">
+        <div class="min-w-0"><h3 id="file-title" style="color: var(--midnight-blue);" class="font-bold text-base break-words"></h3><p id="file-info" class="text-[11px] text-stone-500 mt-0.5"></p></div>
+        <button onclick="closeModal('modal-file')" class="text-stone-400 hover:text-stone-600 flex-shrink-0" aria-label="Close"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <div id="file-body"></div>
     </div>
   </div>
 
