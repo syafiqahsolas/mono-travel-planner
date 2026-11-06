@@ -1253,7 +1253,7 @@ function renderSummaryPage() {
 
   const docPreview = document.getElementById('summary-doc-preview');
   if (docPreview) {
-    const docItems = (trip.checklists?.packing || []).filter(i => i.category === 'documents' && (i.fileData || i.photoRef));
+    const docItems = (trip.checklists?.packing || []).filter(i => i.category === 'documents' && (i.fileData || i.photoRef || i.fileMeta));
     if (docItems.length > 0) {
       const topDoc = docItems[0];
       docPreview.innerHTML = `
@@ -1262,7 +1262,7 @@ function renderSummaryPage() {
             <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">Uploaded Document</span>
             <h4 style="color: var(--olive-green);" class="font-bold text-xs mt-1">${topDoc.text}</h4>
           </div>
-          <img src="${docPhoto(topDoc) || PLACEHOLDER_IMG}" onclick="openImageViewer(this.src)" class="w-12 h-12 object-cover rounded-xl border border-stone-200 cursor-pointer" />
+          ${topDoc.fileMeta ? `<button onclick="openDocById('${topDoc.id}')" aria-label="Open file" class="w-12 h-12 rounded-xl border border-stone-200 flex items-center justify-center text-rose-600 bg-white"><i class="fa-solid fa-file-pdf text-xl"></i></button>` : `<img src="${docPhoto(topDoc) || PLACEHOLDER_IMG}" onclick="openImageViewer(this.src)" class="w-12 h-12 object-cover rounded-xl border border-stone-200 cursor-pointer" />`}
         </div>
       `;
     } else {
@@ -1814,6 +1814,7 @@ function resolveCoord(trip, a) {
 
 function openDocById(id) {
   const d = [getActiveTrip(), ...(appData.trips || [])].map(t => t && t.checklists && t.checklists.packing.find(i => i.id === id)).find(Boolean);
+  if (d && d.fileMeta) return openDocFile(d);
   const ph = d && docPhoto(d);
   if (ph) openImageViewer(ph);
   else { switchDashboardPage('checklists'); selectPackingCategory('documents'); }
@@ -1893,7 +1894,7 @@ function renderItinerary() {
           ${dark}
           ${a.notes ? `<p class="text-[11px] text-stone-400">${escapeHtml(a.notes)}</p>` : ''}
           ${doc ? `<button onclick="openDocById('${doc.id}')" class="w-full flex items-center gap-2 rounded-xl p-2 text-left" style="background: var(--beige);">
-            ${docPhoto(doc) ? `<img src="${docPhoto(doc)}" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">` : '<i class="fa-solid fa-ticket text-stone-500 px-2"></i>'}
+            ${docPhoto(doc) ? `<img src="${docPhoto(doc)}" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">` : (doc.fileMeta ? '<i class="fa-solid fa-file-pdf text-rose-600 px-2 text-lg"></i>' : '<i class="fa-solid fa-ticket text-stone-500 px-2"></i>')}
             <span class="text-[11px] font-semibold flex-1 truncate" style="color: var(--midnight-blue);">${escapeHtml(doc.text)}</span>
             <span class="text-[10px] font-bold" style="color: var(--muted-teal);">View</span></button>` : ''}
         </div>
@@ -1925,7 +1926,7 @@ function fillItinSelects(selPlace, selDoc) {
   if (placeInput && selected) placeInput.value = selected.name;
   if (hidden) hidden.value = selPlace || '';
   document.getElementById('itin-form-doc').innerHTML = '<option value="">None</option>'
-    + (trip.checklists?.packing || []).filter(i => i.category === 'documents').map(i => `<option value="${i.id}" ${i.id === selDoc ? 'selected' : ''}>${i.shared ? '👥 ' : '🔒 '}${i.text}${(i.fileData || i.photoRef) ? ' 📷' : ''}</option>`).join('');
+    + (trip.checklists?.packing || []).filter(i => i.category === 'documents').map(i => `<option value="${i.id}" ${i.id === selDoc ? 'selected' : ''}>${i.shared ? '👥 ' : '🔒 '}${i.text}${i.fileMeta ? ' 📄' : ((i.fileData || i.photoRef) ? ' 📷' : '')}</option>`).join('');
   document.getElementById('itin-form-docfile').value = '';
 }
 
@@ -2003,8 +2004,9 @@ function saveItineraryForm() {
   if (!v('title')) return alert("Enter activity title!");
   const trip = getActiveTrip();
   const file = document.getElementById('itin-form-docfile').files[0];
-  const finish = (data) => {
+  const finish = (data, meta) => {
     let docId = document.getElementById('itin-form-doc').value || null;
+    if (meta) { docId = 'd_' + Date.now(); trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, shared: true, fileMeta: meta }); }
     if (data) {
       docId = 'd_' + Date.now();
       if (String(data).startsWith('http')) trip.checklists.packing.push({ id: docId, text: v('title') + ' (ticket)', category: 'documents', done: false, important: false, shared: true, fileData: data });
@@ -2019,7 +2021,9 @@ function saveItineraryForm() {
     } else trip.itinerary.push(act);
     saveAppData(); closeModal('modal-itinerary'); renderItinerary(); renderSummaryPage();
   };
-  if (file) uploadImageToFirebase(file, 'tickets').then(url => { if (url) finish(url); else scaleImage(file, 1100, finish); }); else finish(null);
+  if (file && isPdf(file)) storeFile(file, true).then(m => finish(null, m)).catch(e => alert(e.message || "Couldn't save that file."));
+  else if (file) uploadImageToFirebase(file, 'tickets').then(url => { if (url) finish(url); else scaleImage(file, 1100, finish); });
+  else finish(null);
 }
 
 function deleteItineraryActivity(realIdx) {
@@ -2086,7 +2090,7 @@ function renderCategorizedPackingList() {
           <button onclick="deletePackingItem(${realIdx})" class="text-stone-300 hover:text-red-500"><i class="fa-solid fa-trash text-xs"></i></button>
         </div>
       </div>
-      ${docPhoto(item) ? `<img src="${docPhoto(item)}" onclick="openImageViewer(this.src)" class="w-full h-32 object-cover rounded-xl border border-stone-100 mt-1 cursor-pointer" />` : ''}
+      ${item.fileMeta ? fileCardHtml(item) : ''}${docPhoto(item) ? `<img src="${docPhoto(item)}" onclick="openImageViewer(this.src)" class="w-full h-32 object-cover rounded-xl border border-stone-100 mt-1 cursor-pointer" />` : ''}
     `;
     container.appendChild(div);
   });
@@ -2098,6 +2102,7 @@ function openPackingItemModal() {
   document.getElementById('pack-form-category').value = activePackingCategory;
   document.getElementById('pack-form-file').value = "";
   document.getElementById('pack-form-shared').checked = false;
+  const pcf = document.getElementById('pack-file-current'); if (pcf) pcf.textContent = '';
   document.getElementById('modal-packing-title').innerText = "Add Packing Item";
   toggleDocUploadVisibility();
   openModal('modal-packing');
@@ -2111,6 +2116,7 @@ function openEditPackingItem(idx) {
   document.getElementById('pack-form-category').value = it.category || 'clothes';
   document.getElementById('pack-form-file').value = "";
   document.getElementById('pack-form-shared').checked = !!it.shared;
+  const pcf = document.getElementById('pack-file-current'); if (pcf) pcf.textContent = it.fileMeta ? `Current file: ${it.fileMeta.name} (${fmtSize(it.fileMeta.size)}). Choose another to replace it.` : '';
   document.getElementById('modal-packing-title').innerText = "Edit Item";
   toggleDocUploadVisibility();
   openModal('modal-packing');
@@ -2119,6 +2125,92 @@ function openEditPackingItem(idx) {
 function toggleDocUploadVisibility() {
   const cat = document.getElementById('pack-form-category')?.value;
   document.getElementById('pack-doc-upload-container')?.classList.toggle('hidden', cat !== 'documents');
+}
+
+// ================= PDF / FILE DOCUMENTS =================
+// Private files live in this phone's file storage (IndexedDB). Shared files go to Firebase Storage when it is set up,
+// otherwise they are cut into pieces and kept as their own cloud documents (no setup needed, up to 5 MB).
+const MAX_PRIVATE_FILE = 25 * 1024 * 1024, MAX_STORAGE_FILE = 12 * 1024 * 1024, MAX_CHUNKED_FILE = 5 * 1024 * 1024, CHUNK_CHARS = 700000;
+const isPdf = f => !!f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+const fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+function idbOpen() { return new Promise((res, rej) => { const r = indexedDB.open('waddl-files', 1); r.onupgradeneeded = () => r.result.createObjectStore('blobs'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbPut(key, blob) { const d = await idbOpen(); return new Promise((res, rej) => { const tx = d.transaction('blobs', 'readwrite'); tx.objectStore('blobs').put(blob, key); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+async function idbGet(key) { const d = await idbOpen(); return new Promise((res, rej) => { const q = d.transaction('blobs').objectStore('blobs').get(key); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); }); }
+async function idbDel(key) { try { const d = await idbOpen(); const tx = d.transaction('blobs', 'readwrite'); tx.objectStore('blobs').delete(key); } catch (e) {} }
+const blobToBase64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+function base64ToBlob(b64, type) { const bin = atob(b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return new Blob([u8], { type }); }
+
+async function storeFile(file, shared) {
+  const id = 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const meta = { type: 'application/pdf', name: file.name || 'ticket.pdf', size: file.size };
+  if (!shared) {
+    if (file.size > MAX_PRIVATE_FILE) throw new Error('That file is over 25 MB.');
+    await idbPut('file:' + id, file);
+    return { ...meta, local: id };
+  }
+  if (storage && file.size <= MAX_STORAGE_FILE) {
+    try {
+      const snap = await withTimeout(storage.ref().child(`files/${id}.pdf`).put(file, { contentType: 'application/pdf' }), 30000);
+      return { ...meta, url: await snap.ref.getDownloadURL() };
+    } catch (e) { console.warn('Storage upload failed, using cloud documents instead', e); }
+  }
+  if (file.size > MAX_CHUNKED_FILE) throw new Error('This PDF is over 5 MB. To share bigger files, set up Firebase Storage (and allow PDFs in its rules), or keep it private on this phone.');
+  if (!navigator.onLine) throw new Error("You're offline. Shared files upload when you're online. You can keep it private for now.");
+  const b64 = await blobToBase64(file), n = Math.ceil(b64.length / CHUNK_CHARS);
+  for (let i = 0; i < n; i++) await withTimeout(db.collection('travelHub').doc(`filechunk_${id}_${i}`).set({ d: b64.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS) }), 30000);
+  await withTimeout(db.collection('travelHub').doc('file_' + id).set({ n, type: meta.type, name: meta.name, size: meta.size }), 30000);
+  return { ...meta, fs: id, chunks: n };
+}
+async function getFileBlob(m) {
+  if (m.local) return await idbGet('file:' + m.local);
+  const key = 'cache:' + (m.fs || m.url);
+  try { const hit = await idbGet(key); if (hit) return hit; } catch (e) {}
+  let blob = null;
+  if (m.fs) {
+    const parts = await Promise.all(Array.from({ length: m.chunks || 1 }, (_, i) => db.collection('travelHub').doc(`filechunk_${m.fs}_${i}`).get()));
+    if (parts.some(p => !p.exists)) throw new Error('Part of this file is missing from the cloud.');
+    blob = base64ToBlob(parts.map(p => p.data().d).join(''), m.type);
+  } else if (m.url) { const r = await fetch(m.url); if (!r.ok) throw new Error('HTTP ' + r.status); blob = await r.blob(); }
+  if (blob) idbPut(key, blob).catch(() => {});      // kept for offline
+  return blob;
+}
+function deleteFileStore(m) {
+  if (!m) return;
+  try {
+    if (m.local) idbDel('file:' + m.local);
+    if (m.fs) { for (let i = 0; i < (m.chunks || 1); i++) db.collection('travelHub').doc(`filechunk_${m.fs}_${i}`).delete().catch(() => {}); db.collection('travelHub').doc('file_' + m.fs).delete().catch(() => {}); idbDel('cache:' + m.fs); }
+    if (m.url) { idbDel('cache:' + m.url); if (storage && String(m.url).includes('firebasestorage')) storage.refFromURL(m.url).delete().catch(() => {}); }
+  } catch (e) {}
+}
+function fileCardHtml(item) {
+  const m = item.fileMeta;
+  return `<button onclick="openDocById('${item.id}')" class="mt-1 w-full flex items-center gap-2.5 rounded-xl p-2.5 text-left" style="background: var(--beige);">
+    <span class="w-9 h-9 rounded-lg bg-white flex items-center justify-center flex-shrink-0 text-rose-600"><i class="fa-solid fa-file-pdf"></i></span>
+    <span class="min-w-0 flex-1"><span class="block text-xs font-bold truncate" style="color: var(--midnight-blue);">${escapeHtml(m.name)}</span><span class="block text-[10px] text-stone-500">PDF • ${fmtSize(m.size)}</span></span>
+    <span class="text-[10px] font-bold" style="color: var(--muted-teal);">Open</span></button>`;
+}
+async function openDocFile(item) {
+  const m = item.fileMeta;
+  if (!m) return;
+  if (window._fileUrl && String(window._fileUrl).startsWith('blob:')) URL.revokeObjectURL(window._fileUrl);
+  window._fileUrl = null;
+  document.getElementById('file-title').textContent = m.name;
+  document.getElementById('file-info').textContent = `PDF • ${fmtSize(m.size)} • ${item.shared ? '👥 Shared with everyone' : '🔒 Only on this phone'}`;
+  const body = document.getElementById('file-body');
+  body.innerHTML = '<p class="text-xs text-stone-500 py-6 text-center"><i class="fa-solid fa-spinner fa-spin me-1"></i>Loading the file…</p>';
+  openModal('modal-file');
+  try {
+    let href = m.url;
+    if (!href) { const blob = await getFileBlob(m); if (!blob) throw new Error('This file is no longer on this phone.'); href = URL.createObjectURL(blob); }
+    window._fileUrl = href; window._fileName = m.name;
+    body.innerHTML = `<div class="grid grid-cols-2 gap-2">
+        <a href="${href}" target="_blank" rel="noopener" class="py-3 rounded-2xl text-sm font-bold text-white text-center" style="background: var(--midnight-blue);"><i class="fa-solid fa-up-right-from-square me-1"></i>Open PDF</a>
+        <button onclick="downloadPhoto(window._fileUrl, window._fileName)" class="py-3 rounded-2xl text-sm font-bold text-white" style="background: var(--muted-teal);"><i class="fa-solid fa-download me-1"></i>Download</button></div>
+      ${window.matchMedia && window.matchMedia('(min-width: 768px)').matches ? `<iframe src="${href}" title="${escapeHtml(m.name)}" class="w-full rounded-xl border border-stone-200 mt-3" style="height: 60vh;"></iframe>` : '<p class="text-[11px] text-stone-400 mt-3">Tap Open PDF to view it in your phone\'s PDF viewer.</p>'}`;
+  } catch (e) {
+    body.innerHTML = `<p class="text-xs py-4" style="color: var(--carnival-red);">Couldn't load this file: ${escapeHtml(e.message || 'unknown problem')}. Check your connection and try again.</p>`;
+  }
 }
 
 function savePackingItemForm() {
@@ -2131,11 +2223,16 @@ function savePackingItemForm() {
   if (!trip.checklists.packing) trip.checklists.packing = [];
   const list = trip.checklists.packing;
   
-  const finish = async (newData) => {
+  const finish = async (newData, newMeta) => {
     let it;
     if (editingPackingIndex !== null && list[editingPackingIndex]) it = list[editingPackingIndex];
     else { it = { id: 'chk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), done: false, important: false, fileData: null }; list.push(it); }
     it.text = text; it.category = category;
+    if (newMeta) { if (it.fileMeta) deleteFileStore(it.fileMeta); it.fileMeta = newMeta; }
+    else if (it.fileMeta && !!it.shared !== shared) {          // moving a file between "only me" and "shared"
+      try { const blob = await getFileBlob(it.fileMeta); const nm = await storeFile(new File([blob], it.fileMeta.name, { type: it.fileMeta.type }), shared); deleteFileStore(it.fileMeta); it.fileMeta = nm; }
+      catch (e) { alert("Couldn't move the file: " + (e.message || e)); return; }
+    }
     let photo = newData || it.fileData || null;
     if (!photo && it.photoRef) photo = await fetchPhotoNow(it.photoRef);
     if (shared) {
@@ -2149,6 +2246,13 @@ function savePackingItemForm() {
     saveAppData(); closeModal('modal-packing'); selectPackingCategory(category); renderSummaryPage();
   };
   
+  if (category === 'documents' && file && isPdf(file)) {
+    const btn = document.querySelector('#modal-packing [onclick="savePackingItemForm()"]');
+    if (btn) { btn.disabled = true; btn.dataset.t = btn.textContent; btn.textContent = 'Uploading…'; }
+    storeFile(file, shared).then(m => finish(null, m)).catch(e => alert(e.message || "Couldn't save that file."))
+      .finally(() => { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.t || 'Save'; } });
+    return;
+  }
   if (category === 'documents' && file) {
     if (shared) {   // only shared photos go to the cloud; private ones never leave this phone
       uploadImageToFirebase(file, "documents").then(url => { if (url) finish(url); else scaleImage(file, 1100, finish); });
@@ -2179,6 +2283,7 @@ function deletePackingItem(idx) {
   const trip = getActiveTrip();
   const gone = trip.checklists.packing[idx];
   if (gone && gone.photoRef) deletePhotoDoc(gone.photoRef);
+  if (gone && gone.fileMeta) deleteFileStore(gone.fileMeta);
   trip.checklists.packing.splice(idx, 1);
   saveAppData();
   renderCategorizedPackingList();
@@ -2645,7 +2750,7 @@ function deleteTripNow() {
   const id = _deleteTripId;
   if (!id) return;
   const doomed = appData.trips.find(t => t.id === id);
-  ((doomed && doomed.checklists && doomed.checklists.packing) || []).forEach(i => { if (i.photoRef) deletePhotoDoc(i.photoRef); });
+  ((doomed && doomed.checklists && doomed.checklists.packing) || []).forEach(i => { if (i.photoRef) deletePhotoDoc(i.photoRef); if (i.fileMeta) deleteFileStore(i.fileMeta); });
   appData.deletedTrips = { ...(appData.deletedTrips || {}), [id]: Date.now() };   // so an older copy can't bring it back
   appData.trips = appData.trips.filter(t => t.id !== id);
   try { localStorage.removeItem(checklistStorageKey(id)); } catch (e) {}
